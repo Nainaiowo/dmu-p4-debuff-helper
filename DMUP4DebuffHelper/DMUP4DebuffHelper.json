@@ -1,0 +1,16 @@
+{
+  "Author": "Nainaiowo",
+  "Name": "DMU P4 Debuff Helper",
+  "InternalName": "DMUP4DebuffHelper",
+  "DownloadCount": 0,
+  "Punchline": "Track DMU P4 debuffs.",
+  "Description": "Shows compact DMU P4 debuff timers with real/fake callouts.",
+  "RepoUrl": "https://github.com/Nainaiowo/dmu-p4-debuff-helper",
+  "ApplicableVersion": "any",
+  "Tags": [
+    "dmu",
+    "p4",
+    "debuff",
+    "ultimate"
+  ]
+}
