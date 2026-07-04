@@ -3,6 +3,14 @@ namespace DMUP4DebuffHelper;
 using System;
 using System.Collections.Generic;
 
+public enum DmuHelperDisplayMode
+{
+    Empty,
+    Preview,
+    P3BlackHole,
+    P4Debuffs,
+}
+
 public enum P4Boss
 {
     Unknown,

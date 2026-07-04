@@ -1,16 +1,19 @@
 {
   "Author": "Nainaiowo",
-  "Name": "DMU P4 Debuff Helper",
+  "Name": "DMU Helper",
   "InternalName": "DMUP4DebuffHelper",
-  "DownloadCount": 0,
-  "Punchline": "Track DMU P4 debuffs.",
-  "Description": "Shows compact DMU P4 debuff timers with real/fake callouts.",
+  "DownloadCount": 44,
+  "Punchline": "Track DMU P3 Black Hole and P4 debuffs.",
+  "Description": "Shows a compact DMU helper window for P3 Black Hole assignments and P4 real/fake debuff timers.",
+  "Changelog": "Combined P3 Black Hole assignments and P4 debuff tracking into DMU Helper.",
   "RepoUrl": "https://github.com/Nainaiowo/dmu-p4-debuff-helper",
   "IconUrl": "https://raw.githubusercontent.com/Nainaiowo/dmu-p4-debuff-helper/main/assets/icon.png",
   "ApplicableVersion": "any",
   "Tags": [
     "dmu",
+    "p3",
     "p4",
+    "blackhole",
     "debuff",
     "ultimate"
   ]

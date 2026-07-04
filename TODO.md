@@ -1,14 +1,14 @@
-# DMU P4 Debuff Helper TODO
+# DMU Helper TODO
 
 ## Fast Context
 
-- Plugin name: `DMU P4 Debuff Helper`
+- Plugin name: `DMU Helper`
 - Internal name: `DMUP4DebuffHelper`
 - Repo: `Nainaiowo/dmu-p4-debuff-helper`
 - Puni plugin ID: `162`
 - Dalamud feed URL: `https://puni.sh/api/repository/nainai`
-- Settings command: `/dmup4`
-- Helper commands: `/dmup4h`, `/dmup4helper`
+- Settings commands: `/dmu`, `/dmup3`, `/dmup4`
+- Helper commands: `/dmuh`, `/dmuhelper`, `/dmup3h`, `/dmup3helper`, `/dmup4h`, `/dmup4helper`
 - DMU territory ID: `1363`
 
 ## Implemented
@@ -34,6 +34,8 @@
 - [x] Live helper shows the local player's P4 debuffs as compact icons with details on hover.
 - [x] Added Buff Summary tab with current/recorded pull groups, boss tell history, and captured debuff records.
 - [x] Added helper-window preview mode for inactive testing.
+- [x] Combined P3 Black Hole and P4 debuff display into one compact DMU Helper window.
+- [x] Uses BossMod naming for P3 `5454` as Primordial Crust.
 
 ## Next Work
 

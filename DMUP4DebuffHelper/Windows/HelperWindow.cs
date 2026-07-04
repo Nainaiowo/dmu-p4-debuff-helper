@@ -5,12 +5,15 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using P3 = DMUP3BlackholeHelper;
 
 namespace DMUP4DebuffHelper.Windows;
 
 public sealed class HelperWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
+    private DmuHelperDisplayMode selectedPreviewMode = DmuHelperDisplayMode.P4Debuffs;
+    private int selectedP3PreviewRoleIndex;
     private static readonly Vector4 GoldColor = new(1.0f, 0.78f, 0.18f, 1.0f);
     private static readonly Vector4 RealColor = new(0.25f, 0.85f, 1.0f, 1.0f);
     private static readonly Vector4 FakeColor = new(1.0f, 0.28f, 0.22f, 1.0f);
@@ -24,8 +27,19 @@ public sealed class HelperWindow : Window, IDisposable
     private static readonly Vector4 PreviewButtonOffHoverColor = new(0.25f, 0.25f, 0.28f, 0.92f);
     private const float HelperPadding = 10.0f;
     private const float AssignmentIconSize = 30.0f;
+    private static readonly IReadOnlyList<P3PreviewRole> P3PreviewRoles =
+    [
+        new(P3.LineGroup.First, IsDps: true, HadAccretion: false, "FIL DPS"),
+        new(P3.LineGroup.Second, IsDps: true, HadAccretion: false, "SIL DPS"),
+        new(P3.LineGroup.Third, IsDps: true, HadAccretion: false, "TIL DPS"),
+        new(P3.LineGroup.First, IsDps: false, HadAccretion: false, "FIL Support"),
+        new(P3.LineGroup.Second, IsDps: false, HadAccretion: false, "SIL Support"),
+        new(P3.LineGroup.Third, IsDps: false, HadAccretion: false, "TIL Support"),
+        new(P3.LineGroup.First, IsDps: true, HadAccretion: true, "FIL Accretion"),
+        new(P3.LineGroup.Second, IsDps: true, HadAccretion: true, "SIL Accretion"),
+    ];
 
-    public HelperWindow(Plugin plugin) : base("DMU P4 Debuff Helper###DMUP4DebuffHelper")
+    public HelperWindow(Plugin plugin) : base("DMU Helper###DMUP4DebuffHelper")
     {
         this.plugin = plugin;
 
@@ -43,15 +57,31 @@ public sealed class HelperWindow : Window, IDisposable
         BgAlpha = GetHelperBackgroundOpacity();
         ImGui.SetWindowFontScale(Math.Clamp(plugin.Configuration.HelperFontScale, 0.75f, 2.0f));
 
-        var liveAssignments = plugin.IsInDmu
-            ? GetOrderedAssignments(plugin.CurrentAssignments)
-            : [];
-        var isPreview = plugin.Configuration.PreviewWhenInactive && liveAssignments.Count == 0;
-        var assignments = isPreview
-            ? GetPreviewAssignments()
-            : liveAssignments;
+        switch (plugin.DisplayMode)
+        {
+            case DmuHelperDisplayMode.P4Debuffs:
+                DrawP4View(GetOrderedAssignments(plugin.CurrentAssignments), isPreview: false);
+                break;
+            case DmuHelperDisplayMode.P3BlackHole:
+                DrawP3View(plugin.P3BlackHole.LocalAssignment, isPreview: false);
+                break;
+            case DmuHelperDisplayMode.Preview:
+                DrawPreviewView();
+                break;
+            default:
+                DrawHeader("DMU Helper", 0, isPreview: false);
+                if (!plugin.Configuration.HelperCollapsed)
+                {
+                    ImGui.Spacing();
+                    ImGui.TextDisabled(plugin.IsInDmu ? "Waiting for DMU helper data." : "Waiting for DMU.");
+                }
+                break;
+        }
+    }
 
-        DrawHeader(assignments.Count, isPreview);
+    private void DrawP4View(IReadOnlyList<P4DebuffAssignment> assignments, bool isPreview)
+    {
+        DrawHeader(isPreview ? "P4 Debuffs Preview" : "P4 Debuffs", assignments.Count, isPreview);
         if (plugin.Configuration.HelperCollapsed)
         {
             return;
@@ -64,6 +94,11 @@ public sealed class HelperWindow : Window, IDisposable
             return;
         }
 
+        DrawP4Content(assignments);
+    }
+
+    private void DrawP4Content(IReadOnlyList<P4DebuffAssignment> assignments)
+    {
         if (assignments.Count == 0)
         {
             ImGui.TextDisabled("Waiting for P4 debuffs.");
@@ -81,10 +116,173 @@ public sealed class HelperWindow : Window, IDisposable
         DrawSection("Next 2", nextAssignments, "Next");
     }
 
-    private void DrawHeader(int assignmentCount, bool isPreview)
+    private void DrawP3View(P3.LocalPlayerBlackHoleAssignment? assignment, bool isPreview)
+    {
+        var instructionCount = P3.BlackHoleStrategy.GetInstructionsFor(assignment, plugin.Configuration.SelectedBlackHoleStrategy).Count;
+        DrawHeader(isPreview ? "P3 Black Hole Preview" : "P3 Black Hole", instructionCount, isPreview);
+        if (plugin.Configuration.HelperCollapsed)
+        {
+            return;
+        }
+
+        ImGui.Spacing();
+        DrawP3Content(assignment);
+    }
+
+    private void DrawP3Content(P3.LocalPlayerBlackHoleAssignment? assignment)
+    {
+        ImGui.TextUnformatted("Your Black Hole assignment");
+        if (assignment is null)
+        {
+            ImGui.TextDisabled("Local player not found.");
+            return;
+        }
+
+        if (!assignment.HasLine)
+        {
+            ImGui.TextDisabled("Waiting for your line debuff.");
+            return;
+        }
+
+        DrawStatusIcon(assignment.LineStatusId, assignment.LineName);
+        if (assignment.HadAccretion)
+        {
+            ImGui.SameLine();
+            DrawStatusIcon(1604, "Accretion");
+        }
+
+        ImGui.Separator();
+        ImGui.TextUnformatted("Your Black Hole instructions");
+        var instructions = P3.BlackHoleStrategy.GetInstructionsFor(assignment, plugin.Configuration.SelectedBlackHoleStrategy);
+        if (instructions.Count == 0)
+        {
+            ImGui.TextDisabled("No tether assignment matched.");
+            return;
+        }
+
+        if (!ImGui.BeginTable("##HelperPersonalBlackHoleInstructions", 4, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+        {
+            return;
+        }
+
+        ImGui.TableSetupColumn("Set");
+        ImGui.TableSetupColumn("Wave");
+        ImGui.TableSetupColumn("Tether");
+        ImGui.TableSetupColumn("Action");
+        ImGui.TableHeadersRow();
+
+        foreach (var instruction in instructions)
+        {
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(instruction.Set.ToString());
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(instruction.Wave.ToString());
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(instruction.Tether.ToString());
+            ImGui.TableNextColumn();
+            ImGui.TextWrapped(instruction.Action);
+        }
+
+        ImGui.EndTable();
+    }
+
+    private void DrawPreviewView()
+    {
+        if (selectedPreviewMode is not (DmuHelperDisplayMode.P3BlackHole or DmuHelperDisplayMode.P4Debuffs))
+        {
+            selectedPreviewMode = DmuHelperDisplayMode.P4Debuffs;
+        }
+
+        if (selectedPreviewMode == DmuHelperDisplayMode.P3BlackHole)
+        {
+            DrawHeader("P3 Black Hole Preview", P3.BlackHoleStrategy.GetInstructionsFor(CreateP3PreviewAssignment(), plugin.Configuration.SelectedBlackHoleStrategy).Count, isPreview: true);
+        }
+        else
+        {
+            DrawHeader("P4 Debuffs Preview", GetPreviewAssignments().Count, isPreview: true);
+        }
+
+        if (plugin.Configuration.HelperCollapsed)
+        {
+            return;
+        }
+
+        ImGui.Spacing();
+        DrawPreviewModeSelector();
+        ImGui.Separator();
+
+        if (selectedPreviewMode == DmuHelperDisplayMode.P3BlackHole)
+        {
+            DrawP3PreviewControls();
+            DrawP3Content(CreateP3PreviewAssignment());
+            return;
+        }
+
+        DrawP4Content(GetPreviewAssignments());
+    }
+
+    private void DrawPreviewModeSelector()
+    {
+        var p4Selected = selectedPreviewMode == DmuHelperDisplayMode.P4Debuffs;
+        if (ImGui.RadioButton("P4", p4Selected))
+        {
+            selectedPreviewMode = DmuHelperDisplayMode.P4Debuffs;
+        }
+
+        ImGui.SameLine();
+        var p3Selected = selectedPreviewMode == DmuHelperDisplayMode.P3BlackHole;
+        if (ImGui.RadioButton("P3", p3Selected))
+        {
+            selectedPreviewMode = DmuHelperDisplayMode.P3BlackHole;
+        }
+    }
+
+    private void DrawP3PreviewControls()
+    {
+        var selectedRole = P3PreviewRoles[selectedP3PreviewRoleIndex];
+        ImGui.SetNextItemWidth(160.0f * Math.Clamp(plugin.Configuration.HelperFontScale, 0.75f, 2.0f));
+        if (!ImGui.BeginCombo("Role##P3PreviewRole", selectedRole.Label))
+        {
+            return;
+        }
+
+        for (var i = 0; i < P3PreviewRoles.Count; i++)
+        {
+            var role = P3PreviewRoles[i];
+            if (ImGui.Selectable(role.Label, selectedP3PreviewRoleIndex == i))
+            {
+                selectedP3PreviewRoleIndex = i;
+            }
+
+            if (selectedP3PreviewRoleIndex == i)
+            {
+                ImGui.SetItemDefaultFocus();
+            }
+        }
+
+        ImGui.EndCombo();
+    }
+
+    private P3.LocalPlayerBlackHoleAssignment CreateP3PreviewAssignment()
+    {
+        var role = P3PreviewRoles[selectedP3PreviewRoleIndex];
+        var lineStatusId = GetLineStatusId(role.LineGroup);
+        return new P3.LocalPlayerBlackHoleAssignment(
+            "preview",
+            "You",
+            0,
+            role.IsDps,
+            role.HadAccretion,
+            role.LineGroup,
+            lineStatusId,
+            GetLineName(lineStatusId),
+            30.0f);
+    }
+
+    private void DrawHeader(string titleBase, int assignmentCount, bool isPreview)
     {
         var isExpanded = !plugin.Configuration.HelperCollapsed;
-        var titleBase = isPreview ? "P4 Debuff Helper Preview" : "P4 Debuff Helper";
         var title = assignmentCount > 0
             ? $"{titleBase} ({assignmentCount})"
             : titleBase;
@@ -124,7 +322,7 @@ public sealed class HelperWindow : Window, IDisposable
         DrawPreviewToggleButton();
         if (hovered)
         {
-            ImGui.SetTooltip(isExpanded ? "Collapse P4 helper." : "Expand P4 helper.");
+            ImGui.SetTooltip(isExpanded ? "Collapse DMU helper." : "Expand DMU helper.");
         }
     }
 
@@ -161,7 +359,7 @@ public sealed class HelperWindow : Window, IDisposable
         ImGui.PopStyleColor(3);
         if (ImGui.IsItemHovered())
         {
-            ImGui.SetTooltip("Shows sample P4 debuffs when no live DMU P4 data is available.");
+            ImGui.SetTooltip("Shows sample DMU helper data when no live mechanic data is available.");
         }
     }
 
@@ -399,6 +597,32 @@ public sealed class HelperWindow : Window, IDisposable
         return ImGui.GetTextLineHeight() * 2.0f + AssignmentIconSize + ImGui.GetStyle().ItemSpacing.Y * 2.0f;
     }
 
+    private void DrawStatusIcon(uint statusId, string tooltip)
+    {
+        var iconId = plugin.GetStatusIconId(statusId);
+        if (iconId == 0)
+        {
+            ImGui.TextUnformatted(tooltip);
+            return;
+        }
+
+        var iconScale = Math.Clamp(plugin.Configuration.HelperIconScale, 0.75f, 3.0f);
+        var iconSize = new Vector2(ImGui.GetTextLineHeight() * 1.45f * iconScale);
+        var texture = Plugin.TextureProvider.GetFromGameIcon(new GameIconLookup(iconId));
+        var wrap = texture.GetWrapOrDefault();
+        if (wrap is null)
+        {
+            ImGui.TextUnformatted(tooltip);
+            return;
+        }
+
+        ImGui.Image(wrap.Handle, iconSize);
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(tooltip);
+        }
+    }
+
     private float GetHelperBackgroundOpacity()
     {
         return Math.Clamp(plugin.Configuration.HelperBackgroundOpacity, 0.15f, 1.0f);
@@ -468,4 +692,28 @@ public sealed class HelperWindow : Window, IDisposable
             _ => "Unknown",
         };
     }
+
+    private static uint GetLineStatusId(P3.LineGroup lineGroup)
+    {
+        return lineGroup switch
+        {
+            P3.LineGroup.First => 3004,
+            P3.LineGroup.Second => 3005,
+            P3.LineGroup.Third => 3006,
+            _ => 0,
+        };
+    }
+
+    private static string GetLineName(uint statusId)
+    {
+        return statusId switch
+        {
+            3004 => "First in Line",
+            3005 => "Second in Line",
+            3006 => "Third in Line",
+            _ => "No line debuff",
+        };
+    }
+
+    private sealed record P3PreviewRole(P3.LineGroup LineGroup, bool IsDps, bool HadAccretion, string Label);
 }

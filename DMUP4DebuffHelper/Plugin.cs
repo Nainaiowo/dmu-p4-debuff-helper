@@ -2,23 +2,33 @@ using DMUP4DebuffHelper.Windows;
 using Dalamud.Game.DutyState;
 using Dalamud.Game.Command;
 using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Hooking;
 using Dalamud.Interface.Textures;
 using Dalamud.Interface.Windowing;
 using Dalamud.IoC;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
+using FFXIVClientStructs.FFXIV.Client.Game.Character;
+using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using Lumina.Excel.Sheets;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 
 namespace DMUP4DebuffHelper;
 
 public sealed class Plugin : IDalamudPlugin
 {
-    private const string ConfigCommandName = "/dmup4";
-    private const string ShortHelperCommandName = "/dmup4h";
-    private const string HelperCommandName = "/dmup4helper";
+    private const string ConfigCommandName = "/dmu";
+    private const string ShortHelperCommandName = "/dmuh";
+    private const string HelperCommandName = "/dmuhelper";
+    private const string LegacyP3ConfigCommandName = "/dmup3";
+    private const string LegacyP3ShortHelperCommandName = "/dmup3h";
+    private const string LegacyP3HelperCommandName = "/dmup3helper";
+    private const string LegacyP4ConfigCommandName = "/dmup4";
+    private const string LegacyP4ShortHelperCommandName = "/dmup4h";
+    private const string LegacyP4HelperCommandName = "/dmup4helper";
     private const uint DmuTerritoryId = 1363;
     private const uint BossTellStatusId = 2056;
     private static readonly TimeSpan BossTellFreshness = TimeSpan.FromSeconds(20);
@@ -58,10 +68,13 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
     [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
+    [PluginService] internal static IGameInteropProvider GameInteropProvider { get; private set; } = null!;
+    [PluginService] internal static IFramework Framework { get; private set; } = null!;
 
-    private readonly WindowSystem windowSystem = new("DMUP4DebuffHelper");
+    private readonly WindowSystem windowSystem = new("DMUHelper");
     private readonly ConfigWindow configWindow;
     private readonly HelperWindow helperWindow;
+    private readonly P3BlackHoleTracker p3BlackHoleTracker;
     private readonly List<PartyStatusEntry> currentEntries = [];
     private readonly List<PartyMemberSnapshot> currentMembers = [];
     private readonly List<P4DebuffAssignment> currentAssignments = [];
@@ -80,9 +93,12 @@ public sealed class Plugin : IDalamudPlugin
     private readonly HashSet<string> activeBossTellKeysLastFrame = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> debugKnownAssignments = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ushort> debugKnownBossTellParams = new(StringComparer.Ordinal);
+    private readonly HashSet<string> registeredCommands = new(StringComparer.OrdinalIgnoreCase);
+    private Hook<ActionEffectHandler.Delegates.Receive>? actionEffectHook;
     private DateTime? pullStartedAtUtc;
     private float lastKnownPullElapsedSeconds;
     private bool debugRecognizedTerritory;
+    private bool p4SeenThisPull;
 
     public Configuration Configuration { get; }
 
@@ -100,6 +116,10 @@ public sealed class Plugin : IDalamudPlugin
 
     public IReadOnlyList<P4PullSnapshot> PullSnapshots => pullSnapshots;
 
+    public P3BlackHoleTracker P3BlackHole => p3BlackHoleTracker;
+
+    public DmuHelperDisplayMode DisplayMode { get; private set; } = DmuHelperDisplayMode.Empty;
+
     public float CurrentPullElapsedSeconds => pullStartedAtUtc is not null
         ? (float)(DateTime.UtcNow - pullStartedAtUtc.Value).TotalSeconds
         : lastKnownPullElapsedSeconds;
@@ -109,7 +129,9 @@ public sealed class Plugin : IDalamudPlugin
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        Configuration.SelectedBlackHoleStrategy = DMUP3BlackholeHelper.BlackHoleStrategy.Normalize(Configuration.SelectedBlackHoleStrategy);
 
+        p3BlackHoleTracker = new P3BlackHoleTracker(this);
         configWindow = new ConfigWindow(this);
         helperWindow = new HelperWindow(this)
         {
@@ -119,20 +141,25 @@ public sealed class Plugin : IDalamudPlugin
         windowSystem.AddWindow(configWindow);
         windowSystem.AddWindow(helperWindow);
 
-        CommandManager.AddHandler(ConfigCommandName, new CommandInfo(OnConfigCommand)
-        {
-            HelpMessage = "Open the DMU P4 Debuff Helper settings window.",
-        });
-        CommandManager.AddHandler(ShortHelperCommandName, new CommandInfo(OnHelperCommand)
-        {
-            HelpMessage = "Open the DMU P4 Debuff Helper window.",
-        });
-        CommandManager.AddHandler(HelperCommandName, new CommandInfo(OnHelperCommand)
-        {
-            HelpMessage = "Open the DMU P4 Debuff Helper window.",
-        });
+        AddConfigCommand(ConfigCommandName);
+        AddConfigCommand(LegacyP3ConfigCommandName);
+        AddConfigCommand(LegacyP4ConfigCommandName);
+        AddHelperCommand(ShortHelperCommandName);
+        AddHelperCommand(HelperCommandName);
+        AddHelperCommand(LegacyP3ShortHelperCommandName);
+        AddHelperCommand(LegacyP3HelperCommandName);
+        AddHelperCommand(LegacyP4ShortHelperCommandName);
+        AddHelperCommand(LegacyP4HelperCommandName);
 
-        PluginInterface.UiBuilder.Draw += RefreshStatusSnapshot;
+        unsafe
+        {
+            actionEffectHook = GameInteropProvider.HookFromAddress<ActionEffectHandler.Delegates.Receive>(
+                ActionEffectHandler.MemberFunctionPointers.Receive,
+                OnReceiveActionEffect);
+            actionEffectHook.Enable();
+        }
+
+        Framework.Update += OnFrameworkUpdate;
         PluginInterface.UiBuilder.Draw += windowSystem.Draw;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
         PluginInterface.UiBuilder.OpenMainUi += ToggleHelperUi;
@@ -149,14 +176,64 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenMainUi -= ToggleHelperUi;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;
         PluginInterface.UiBuilder.Draw -= windowSystem.Draw;
-        PluginInterface.UiBuilder.Draw -= RefreshStatusSnapshot;
-        CommandManager.RemoveHandler(HelperCommandName);
-        CommandManager.RemoveHandler(ShortHelperCommandName);
-        CommandManager.RemoveHandler(ConfigCommandName);
+        Framework.Update -= OnFrameworkUpdate;
+        RemoveCommands();
+        actionEffectHook?.Dispose();
 
         windowSystem.RemoveAllWindows();
         configWindow.Dispose();
         helperWindow.Dispose();
+    }
+
+    private void AddConfigCommand(string command)
+    {
+        try
+        {
+            CommandManager.AddHandler(command, new CommandInfo(OnConfigCommand)
+            {
+                HelpMessage = "Open the DMU Helper settings window.",
+            });
+            registeredCommands.Add(command);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Could not register DMU Helper command {Command}.", command);
+        }
+    }
+
+    private void AddHelperCommand(string command)
+    {
+        try
+        {
+            CommandManager.AddHandler(command, new CommandInfo(OnHelperCommand)
+            {
+                HelpMessage = "Open the DMU Helper window.",
+            });
+            registeredCommands.Add(command);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Could not register DMU Helper command {Command}.", command);
+        }
+    }
+
+    private void RemoveCommands()
+    {
+        foreach (var command in registeredCommands.ToList())
+        {
+            try
+            {
+                CommandManager.RemoveHandler(command);
+            }
+            catch (Exception ex)
+            {
+                Log.Debug(ex, "Could not remove DMU Helper command {Command}.", command);
+            }
+            finally
+            {
+                registeredCommands.Remove(command);
+            }
+        }
     }
 
     public void ToggleConfigUi()
@@ -221,10 +298,55 @@ public sealed class Plugin : IDalamudPlugin
         SaveConfiguration();
     }
 
+    public void SetHelperIconScale(float scale)
+    {
+        Configuration.HelperIconScale = Math.Clamp(scale, 0.75f, 3.0f);
+        SaveConfiguration();
+    }
+
     public void SetHelperBackgroundOpacity(float opacity)
     {
         Configuration.HelperBackgroundOpacity = Math.Clamp(opacity, 0.15f, 1.0f);
         SaveConfiguration();
+    }
+
+    public void SetPostBlackHoleInstructionsToChat(bool enabled)
+    {
+        Configuration.PostBlackHoleInstructionsToChat = enabled;
+        p3BlackHoleTracker.ResetInstructionChatCallouts();
+        SaveConfiguration();
+    }
+
+    public void SetSelectedBlackHoleStrategy(DMUP3BlackholeHelper.BlackHoleStrategyKind strategy)
+    {
+        Configuration.SelectedBlackHoleStrategy = DMUP3BlackholeHelper.BlackHoleStrategy.Normalize(strategy);
+        p3BlackHoleTracker.ResetInstructionChatCallouts();
+        SaveConfiguration();
+    }
+
+    public void SetBlackHoleSoundEffectId(int soundEffectId)
+    {
+        Configuration.BlackHoleSoundEffectId = Math.Clamp(
+            soundEffectId,
+            P3BlackHoleTracker.SoundEffectOptions[0].Id,
+            P3BlackHoleTracker.SoundEffectOptions[^1].Id);
+        SaveConfiguration();
+    }
+
+    public void TestBlackHoleSoundEffect()
+    {
+        p3BlackHoleTracker.TestSoundEffect();
+    }
+
+    public void SetAssignmentChatChannel(AssignmentChatChannel channel)
+    {
+        Configuration.AssignmentChatChannel = P3BlackHoleTracker.GetChatChannelOption(channel).Channel;
+        SaveConfiguration();
+    }
+
+    public static string GetChatChannelLabel(AssignmentChatChannel channel)
+    {
+        return P3BlackHoleTracker.GetChatChannelOption(channel).Label;
     }
 
     public void SaveConfiguration()
@@ -242,11 +364,34 @@ public sealed class Plugin : IDalamudPlugin
         ToggleHelperUi();
     }
 
+    private void OnFrameworkUpdate(IFramework framework)
+    {
+        p3BlackHoleTracker.FlushQueuedChatMessages(DateTime.UtcNow);
+        RefreshStatusSnapshot();
+    }
+
+    private unsafe void OnReceiveActionEffect(
+        uint casterEntityId,
+        Character* casterPtr,
+        Vector3* targetPos,
+        ActionEffectHandler.Header* header,
+        ActionEffectHandler.TargetEffects* effects,
+        GameObjectId* targetEntityIds)
+    {
+        if (!p4SeenThisPull)
+        {
+            p3BlackHoleTracker.ProcessActionEffect(casterEntityId, header, targetEntityIds);
+        }
+
+        actionEffectHook?.Original(casterEntityId, casterPtr, targetPos, header, effects, targetEntityIds);
+    }
+
     private void RefreshStatusSnapshot()
     {
         IsInDmu = ClientState.TerritoryType == DmuTerritoryId;
         if (!IsInDmu)
         {
+            p3BlackHoleTracker.Refresh(isInDmu: false, suppressLiveForP4: false);
             CaptureCurrentPullSnapshot("Left DMU");
             currentEntries.Clear();
             currentMembers.Clear();
@@ -257,7 +402,9 @@ public sealed class Plugin : IDalamudPlugin
             capturedDebuffStates.Clear();
             activeBossTellKeysLastFrame.Clear();
             ResetPullState();
+            p4SeenThisPull = false;
             UpdateDebugState(inDmu: false, []);
+            UpdateDisplayMode();
             return;
         }
 
@@ -334,6 +481,37 @@ public sealed class Plugin : IDalamudPlugin
         RefreshLocalAssignments();
         UpdatePullTracking();
         UpdateDebugState(inDmu: true, currentEntries);
+        var p4LiveSignal = HasP4LiveSignal();
+        if (p4LiveSignal && !p4SeenThisPull)
+        {
+            p4SeenThisPull = true;
+            p3BlackHoleTracker.ClearLiveDisplay("P4 detected");
+        }
+
+        if (!p4SeenThisPull)
+        {
+            p3BlackHoleTracker.Refresh(isInDmu: true, suppressLiveForP4: false);
+        }
+
+        UpdateDisplayMode();
+    }
+
+    private bool HasP4LiveSignal()
+    {
+        return currentAssignments.Count > 0 ||
+            localAssignments.Count > 0 ||
+            currentBossTells.Count > 0;
+    }
+
+    private void UpdateDisplayMode()
+    {
+        DisplayMode = HasP4LiveSignal()
+            ? DmuHelperDisplayMode.P4Debuffs
+            : !p4SeenThisPull && p3BlackHoleTracker.HasLiveSignal
+                ? DmuHelperDisplayMode.P3BlackHole
+                : Configuration.PreviewWhenInactive
+                    ? DmuHelperDisplayMode.Preview
+                    : DmuHelperDisplayMode.Empty;
     }
 
     private void RefreshBossTellSnapshots()
@@ -864,7 +1042,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private static void PrintDebug(string message)
     {
-        ChatGui.Print($"[DMU P4 Debuff Helper] {message}");
+        ChatGui.Print($"[DMU Helper] {message}");
     }
 
     private void OnDutyReset(IDutyStateEventArgs args)
@@ -874,6 +1052,7 @@ public sealed class Plugin : IDalamudPlugin
             return;
         }
 
+        p3BlackHoleTracker.OnDutyReset();
         CaptureCurrentPullSnapshot("Wipe/reset detected");
         currentEntries.Clear();
         currentMembers.Clear();
@@ -884,6 +1063,8 @@ public sealed class Plugin : IDalamudPlugin
         capturedDebuffStates.Clear();
         activeBossTellKeysLastFrame.Clear();
         ResetPullState();
+        p4SeenThisPull = false;
+        UpdateDisplayMode();
     }
 
     private void UpdatePullTracking()
