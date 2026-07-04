@@ -1,31 +1,13 @@
 using Dalamud.Configuration;
-using DMUP3BlackholeHelper;
 using System;
+using DMUP3BlackholeHelper;
 
 namespace DMUP4DebuffHelper;
-
-public enum AssignmentChatChannel
-{
-    Say,
-    Party,
-    Alliance,
-    FreeCompany,
-    CrossWorldLinkshell1,
-    CrossWorldLinkshell2,
-    CrossWorldLinkshell3,
-    CrossWorldLinkshell4,
-    CrossWorldLinkshell5,
-    CrossWorldLinkshell6,
-    CrossWorldLinkshell7,
-    CrossWorldLinkshell8,
-}
-
-public sealed record ChatChannelOption(AssignmentChatChannel Channel, string Label, string Command);
 
 [Serializable]
 public sealed class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 2;
+    public int Version { get; set; } = 3;
 
     public bool ShowHelper { get; set; } = true;
 
@@ -33,17 +15,9 @@ public sealed class Configuration : IPluginConfiguration
 
     public bool DebugChat { get; set; }
 
-    public bool ShowOnlyWatchedStatuses { get; set; }
-
     public bool HelperCollapsed { get; set; }
 
-    public bool PostBlackHoleInstructionsToChat { get; set; }
-
     public BlackHoleStrategyKind SelectedBlackHoleStrategy { get; set; } = BlackHoleStrategyKind.Standard;
-
-    public int BlackHoleSoundEffectId { get; set; } = 1;
-
-    public AssignmentChatChannel AssignmentChatChannel { get; set; } = AssignmentChatChannel.Party;
 
     public float HelperFontScale { get; set; } = 1.0f;
 

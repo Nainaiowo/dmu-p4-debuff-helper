@@ -1,12 +1,7 @@
 namespace DMUP4DebuffHelper;
 
-using Dalamud.Game.Text;
-using Dalamud.Game.Text.SeStringHandling;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
-using FFXIVClientStructs.FFXIV.Client.System.String;
-using FFXIVClientStructs.FFXIV.Client.UI;
-using FFXIVClientStructs.FFXIV.Client.UI.Shell;
 using Lumina.Excel.Sheets;
 using P3 = DMUP3BlackholeHelper;
 using System;
@@ -19,36 +14,12 @@ public sealed class P3BlackHoleTracker
     private const float DeathCauseFreshnessSeconds = 15.0f;
     private const double StatusPulseDebounceSeconds = 2.0;
     private const double LiveDisplayGraceSeconds = 2.5;
-    private const ushort ChatGreenColorKey = 45;
-    private const int NoSoundEffectId = 0;
-    private const int QueuedChatDelayMs = 750;
 
     private static readonly IReadOnlySet<uint> BlackHoleResolutionActionIds = new HashSet<uint>
     {
         47868, // Nothingness
         48333, // Black Spark
     };
-
-    public static readonly IReadOnlyList<ChatChannelOption> ChatChannelOptions =
-    [
-        new(AssignmentChatChannel.Say, "Say", "/s"),
-        new(AssignmentChatChannel.Party, "Party", "/p"),
-        new(AssignmentChatChannel.Alliance, "Alliance", "/alliance"),
-        new(AssignmentChatChannel.FreeCompany, "Free Company", "/fc"),
-        new(AssignmentChatChannel.CrossWorldLinkshell1, "Cross-world Linkshell 1", "/cwl1"),
-        new(AssignmentChatChannel.CrossWorldLinkshell2, "Cross-world Linkshell 2", "/cwl2"),
-        new(AssignmentChatChannel.CrossWorldLinkshell3, "Cross-world Linkshell 3", "/cwl3"),
-        new(AssignmentChatChannel.CrossWorldLinkshell4, "Cross-world Linkshell 4", "/cwl4"),
-        new(AssignmentChatChannel.CrossWorldLinkshell5, "Cross-world Linkshell 5", "/cwl5"),
-        new(AssignmentChatChannel.CrossWorldLinkshell6, "Cross-world Linkshell 6", "/cwl6"),
-        new(AssignmentChatChannel.CrossWorldLinkshell7, "Cross-world Linkshell 7", "/cwl7"),
-        new(AssignmentChatChannel.CrossWorldLinkshell8, "Cross-world Linkshell 8", "/cwl8"),
-    ];
-
-    public static readonly IReadOnlyList<P3.SoundEffectOption> SoundEffectOptions =
-        new[] { new P3.SoundEffectOption(NoSoundEffectId, "None") }
-            .Concat(Enumerable.Range(1, 16).Select(id => new P3.SoundEffectOption(id, $"<se.{id}>")))
-            .ToList();
 
     internal static readonly IReadOnlyDictionary<uint, P3.WatchedStatus> WatchedStatuses =
         new Dictionary<uint, P3.WatchedStatus>
@@ -82,14 +53,11 @@ public sealed class P3BlackHoleTracker
     private readonly HashSet<int> observedBlackHoleWaveKeys = [];
     private readonly HashSet<string> activePrimordialCrustKeys = new(StringComparer.Ordinal);
     private readonly HashSet<string> activeEarthResistanceKeys = new(StringComparer.Ordinal);
-    private readonly HashSet<int> postedNowInstructionCalloutWaveKeys = [];
-    private readonly Queue<QueuedChatMessage> queuedChatMessages = [];
     private DateTime? blackHoleStartedAtUtc;
     private DateTime? lastBlackHoleSeenAtUtc;
     private DateTime? lastLiveSignalSeenAtUtc;
     private DateTime lastPrimordialCrustPulseAtUtc = DateTime.MinValue;
     private DateTime lastEarthResistancePulseAtUtc = DateTime.MinValue;
-    private DateTime nextQueuedChatMessageAtUtc = DateTime.MinValue;
     private int primordialCrustPulseCount;
     private int earthPulseCount;
     private float lastKnownBlackHoleElapsedSeconds;
@@ -152,47 +120,18 @@ public sealed class P3BlackHoleTracker
         RefreshStatusSnapshot();
     }
 
-    public void FlushQueuedChatMessages(DateTime now)
-    {
-        if (queuedChatMessages.Count == 0 || nextQueuedChatMessageAtUtc > now)
-        {
-            return;
-        }
-
-        var nextMessage = queuedChatMessages.Dequeue();
-        SendChat(nextMessage.Channel, nextMessage.Message);
-        nextQueuedChatMessageAtUtc = now.AddMilliseconds(QueuedChatDelayMs);
-    }
-
     public void OnDutyReset()
     {
         CaptureCurrentPullSnapshot("Wipe/reset detected");
         ClearCurrentState();
-        ResetBlackHoleState(resetInstructionCallouts: true);
+        ResetBlackHoleState();
     }
 
     public void ClearLiveDisplay(string reason)
     {
         CaptureCurrentPullSnapshot(reason);
         ClearCurrentState();
-        ResetBlackHoleState(resetInstructionCallouts: true);
-    }
-
-    public void PrintAssignmentToChat(P3.LocalPlayerBlackHoleAssignment assignment, string pullLabel)
-    {
-        QueueChat(
-            plugin.Configuration.AssignmentChatChannel,
-            $"[DMU Helper] {pullLabel} assignment: {assignment.MemberName} - {assignment.RoleName}");
-    }
-
-    public void TestSoundEffect()
-    {
-        PrintSoundEffectEcho(plugin.Configuration.BlackHoleSoundEffectId);
-    }
-
-    public void ResetInstructionChatCallouts()
-    {
-        postedNowInstructionCalloutWaveKeys.Clear();
+        ResetBlackHoleState();
     }
 
     public unsafe void ProcessActionEffect(
@@ -215,7 +154,7 @@ public sealed class P3BlackHoleTracker
     {
         CaptureCurrentPullSnapshot("Left DMU");
         ClearCurrentState();
-        ResetBlackHoleState(resetInstructionCallouts: true);
+        ResetBlackHoleState();
         UpdateDebugState(inDmu: false, []);
     }
 
@@ -313,7 +252,6 @@ public sealed class P3BlackHoleTracker
         LocalAssignment = BuildLocalAssignment();
         UpdateBlackHoleState(currentEntries);
         UpdatePartyDeathTimeline(nextDeathStates);
-        UpdateInstructionChatCallout();
         UpdateDebugState(inDmu: true, currentEntries);
     }
 
@@ -426,7 +364,7 @@ public sealed class P3BlackHoleTracker
             EarthPulseCount: earthPulseCount);
     }
 
-    private void ResetBlackHoleState(bool resetInstructionCallouts = false)
+    private void ResetBlackHoleState()
     {
         blackHoleStartedAtUtc = null;
         lastBlackHoleSeenAtUtc = null;
@@ -437,10 +375,6 @@ public sealed class P3BlackHoleTracker
         activeEarthResistanceKeys.Clear();
         lastPrimordialCrustPulseAtUtc = DateTime.MinValue;
         lastEarthResistancePulseAtUtc = DateTime.MinValue;
-        if (resetInstructionCallouts)
-        {
-            ResetInstructionChatCallouts();
-        }
 
         MechanicState = P3.BlackHoleMechanicState.Inactive;
     }
@@ -795,72 +729,6 @@ public sealed class P3BlackHoleTracker
         return $"{wave.Key}:{header->ActionId}:{header->GlobalSequence}:{hitKey}";
     }
 
-    private void UpdateInstructionChatCallout()
-    {
-        if (!plugin.Configuration.PostBlackHoleInstructionsToChat)
-        {
-            return;
-        }
-
-        var assignment = LocalAssignment;
-        if (assignment is null || !assignment.HasLine)
-        {
-            return;
-        }
-
-        if (GetNowCalloutWave(assignment) is { } currentWave)
-        {
-            TryPostInstructionChatCallout("NOW", currentWave, assignment);
-        }
-    }
-
-    private P3.BlackHoleWave? GetNowCalloutWave(P3.LocalPlayerBlackHoleAssignment assignment)
-    {
-        if (!MechanicState.IsActive || primordialCrustPulseCount <= 0)
-        {
-            return null;
-        }
-
-        var observedWave = P3.BlackHoleTimeline.GetWaveByPulseCount(primordialCrustPulseCount);
-        if (observedWave is null ||
-            !observedBlackHoleWaveKeys.Contains(observedWave.Key) ||
-            postedNowInstructionCalloutWaveKeys.Contains(observedWave.Key))
-        {
-            return null;
-        }
-
-        return GetInstructionsForWave(assignment, observedWave).Count > 0
-            ? observedWave
-            : null;
-    }
-
-    private void TryPostInstructionChatCallout(
-        string header,
-        P3.BlackHoleWave wave,
-        P3.LocalPlayerBlackHoleAssignment assignment)
-    {
-        var instructions = GetInstructionsForWave(assignment, wave);
-        if (instructions.Count == 0)
-        {
-            return;
-        }
-
-        postedNowInstructionCalloutWaveKeys.Add(wave.Key);
-
-        var lines = BuildInstructionCalloutLines(header, wave, instructions);
-        for (var i = 0; i < lines.Count; i++)
-        {
-            if (i == 0)
-            {
-                PrintEcho(CreateGreenText(lines[i]));
-                PrintSoundEffectEcho(plugin.Configuration.BlackHoleSoundEffectId);
-                continue;
-            }
-
-            PrintEcho(lines[i]);
-        }
-    }
-
     private IReadOnlyList<P3.BlackHoleInstruction> GetInstructionsForWave(
         P3.LocalPlayerBlackHoleAssignment assignment,
         P3.BlackHoleWave wave)
@@ -869,112 +737,6 @@ public sealed class P3BlackHoleTracker
             .Where(instruction => instruction.IsForWave(wave))
             .OrderBy(instruction => instruction.Tether)
             .ToList();
-    }
-
-    private static IReadOnlyList<string> BuildInstructionCalloutLines(
-        string header,
-        P3.BlackHoleWave wave,
-        IReadOnlyList<P3.BlackHoleInstruction> instructions)
-    {
-        var lines = new List<string>
-        {
-            $"[DMU Helper] {header}: {wave.Label}",
-        };
-
-        lines.AddRange(instructions.Select(instruction => $"Tether {instruction.Tether}: {instruction.Action}"));
-        return lines;
-    }
-
-    private static int ClampSoundEffectId(int soundEffectId)
-    {
-        return Math.Clamp(soundEffectId, SoundEffectOptions[0].Id, SoundEffectOptions[^1].Id);
-    }
-
-    private static unsafe void PrintSoundEffectEcho(int soundEffectId)
-    {
-        var id = ClampSoundEffectId(soundEffectId);
-        if (id == NoSoundEffectId)
-        {
-            return;
-        }
-
-        var uiModule = UIModule.Instance();
-        var shellModule = RaptureShellModule.Instance();
-        if (uiModule == null || shellModule == null)
-        {
-            Plugin.Log.Debug("Could not send sound effect echo because the UI shell is unavailable.");
-            return;
-        }
-
-        using var command = new Utf8String($"/echo <se.{id}>");
-        shellModule->ExecuteCommandInner(&command, uiModule);
-    }
-
-    private static void PrintEcho(string message)
-    {
-        Plugin.ChatGui.Print(new XivChatEntry
-        {
-            Type = XivChatType.Echo,
-            Message = message,
-        });
-    }
-
-    private static void PrintEcho(SeString message)
-    {
-        Plugin.ChatGui.Print(new XivChatEntry
-        {
-            Type = XivChatType.Echo,
-            Message = message,
-        });
-    }
-
-    private void QueueChat(AssignmentChatChannel channel, string message)
-    {
-        queuedChatMessages.Enqueue(new QueuedChatMessage(GetChatChannelOption(channel).Channel, SanitizeChatText(message)));
-    }
-
-    private static unsafe void SendChat(AssignmentChatChannel channel, string message)
-    {
-        try
-        {
-            var uiModule = UIModule.Instance();
-            var shellModule = RaptureShellModule.Instance();
-            if (uiModule == null || shellModule == null)
-            {
-                Plugin.Log.Warning("Could not send DMU helper chat message because the UI shell is unavailable.");
-                Plugin.ChatGui.Print("[DMU Helper] Could not send chat message.");
-                return;
-            }
-
-            using var command = new Utf8String($"{GetChatChannelOption(channel).Command} {SanitizeChatText(message)}");
-            shellModule->ExecuteCommandInner(&command, uiModule);
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.Warning(ex, "Could not send DMU helper chat message.");
-            Plugin.ChatGui.Print("[DMU Helper] Could not send chat message.");
-        }
-    }
-
-    public static ChatChannelOption GetChatChannelOption(AssignmentChatChannel channel)
-    {
-        return ChatChannelOptions.FirstOrDefault(option => option.Channel == channel) ??
-            ChatChannelOptions.First(option => option.Channel == AssignmentChatChannel.Party);
-    }
-
-    private static string SanitizeChatText(string message)
-    {
-        return message
-            .Replace("\r", " ", StringComparison.Ordinal)
-            .Replace("\n", " ", StringComparison.Ordinal)
-            .Trim();
-    }
-
-    private static SeString CreateGreenText(string message)
-    {
-        return new SeStringBuilder()
-            .AddUiForeground(message, ChatGreenColorKey)
-            .Build();
     }
 
     private void UpdateDebugState(bool inDmu, IReadOnlyList<P3.PartyStatusEntry> entries)
@@ -1133,7 +895,4 @@ public sealed class P3BlackHoleTracker
             20 or 22 or 23 or 25 or 27 or 30 or 31 or 34 or 35 or 36 or 38 or 39 or 41 or 42;
     }
 
-    private readonly record struct QueuedChatMessage(
-        AssignmentChatChannel Channel,
-        string Message);
 }

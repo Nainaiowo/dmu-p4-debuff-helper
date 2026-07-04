@@ -17,7 +17,6 @@ Open settings:
 
 ```text
 /dmu
-/dmup4
 /dmup3
 ```
 
@@ -26,8 +25,6 @@ Open the helper window:
 ```text
 /dmuh
 /dmuhelper
-/dmup4h
-/dmup4helper
 /dmup3h
 /dmup3helper
 ```

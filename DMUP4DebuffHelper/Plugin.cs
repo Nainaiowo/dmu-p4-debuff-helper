@@ -10,11 +10,15 @@ using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
+using FFXIVClientStructs.FFXIV.Client.System.String;
+using FFXIVClientStructs.FFXIV.Client.UI;
+using FFXIVClientStructs.FFXIV.Client.UI.Shell;
 using Lumina.Excel.Sheets;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using P3 = DMUP3BlackholeHelper;
 
 namespace DMUP4DebuffHelper;
 
@@ -26,11 +30,9 @@ public sealed class Plugin : IDalamudPlugin
     private const string LegacyP3ConfigCommandName = "/dmup3";
     private const string LegacyP3ShortHelperCommandName = "/dmup3h";
     private const string LegacyP3HelperCommandName = "/dmup3helper";
-    private const string LegacyP4ConfigCommandName = "/dmup4";
-    private const string LegacyP4ShortHelperCommandName = "/dmup4h";
-    private const string LegacyP4HelperCommandName = "/dmup4helper";
     private const uint DmuTerritoryId = 1363;
     private const uint BossTellStatusId = 2056;
+    private const int QueuedChatDelayMs = 200;
     private static readonly TimeSpan BossTellFreshness = TimeSpan.FromSeconds(20);
 
     internal static readonly IReadOnlyDictionary<uint, WatchedStatus> WatchedStatuses =
@@ -94,8 +96,10 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Dictionary<string, string> debugKnownAssignments = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ushort> debugKnownBossTellParams = new(StringComparer.Ordinal);
     private readonly HashSet<string> registeredCommands = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Queue<string> queuedPartyChatMessages = [];
     private Hook<ActionEffectHandler.Delegates.Receive>? actionEffectHook;
     private DateTime? pullStartedAtUtc;
+    private DateTime nextQueuedPartyChatMessageAtUtc = DateTime.MinValue;
     private float lastKnownPullElapsedSeconds;
     private bool debugRecognizedTerritory;
     private bool p4SeenThisPull;
@@ -143,13 +147,10 @@ public sealed class Plugin : IDalamudPlugin
 
         AddConfigCommand(ConfigCommandName);
         AddConfigCommand(LegacyP3ConfigCommandName);
-        AddConfigCommand(LegacyP4ConfigCommandName);
         AddHelperCommand(ShortHelperCommandName);
         AddHelperCommand(HelperCommandName);
         AddHelperCommand(LegacyP3ShortHelperCommandName);
         AddHelperCommand(LegacyP3HelperCommandName);
-        AddHelperCommand(LegacyP4ShortHelperCommandName);
-        AddHelperCommand(LegacyP4HelperCommandName);
 
         unsafe
         {
@@ -280,12 +281,6 @@ public sealed class Plugin : IDalamudPlugin
         SaveConfiguration();
     }
 
-    public void SetShowOnlyWatchedStatuses(bool enabled)
-    {
-        Configuration.ShowOnlyWatchedStatuses = enabled;
-        SaveConfiguration();
-    }
-
     public void SetHelperCollapsed(bool collapsed)
     {
         Configuration.HelperCollapsed = collapsed;
@@ -310,43 +305,18 @@ public sealed class Plugin : IDalamudPlugin
         SaveConfiguration();
     }
 
-    public void SetPostBlackHoleInstructionsToChat(bool enabled)
-    {
-        Configuration.PostBlackHoleInstructionsToChat = enabled;
-        p3BlackHoleTracker.ResetInstructionChatCallouts();
-        SaveConfiguration();
-    }
-
     public void SetSelectedBlackHoleStrategy(DMUP3BlackholeHelper.BlackHoleStrategyKind strategy)
     {
         Configuration.SelectedBlackHoleStrategy = DMUP3BlackholeHelper.BlackHoleStrategy.Normalize(strategy);
-        p3BlackHoleTracker.ResetInstructionChatCallouts();
         SaveConfiguration();
     }
 
-    public void SetBlackHoleSoundEffectId(int soundEffectId)
+    public void PostP3AssignmentOrderToChat(IReadOnlyList<P3.LocalPlayerBlackHoleAssignment> assignments)
     {
-        Configuration.BlackHoleSoundEffectId = Math.Clamp(
-            soundEffectId,
-            P3BlackHoleTracker.SoundEffectOptions[0].Id,
-            P3BlackHoleTracker.SoundEffectOptions[^1].Id);
-        SaveConfiguration();
-    }
-
-    public void TestBlackHoleSoundEffect()
-    {
-        p3BlackHoleTracker.TestSoundEffect();
-    }
-
-    public void SetAssignmentChatChannel(AssignmentChatChannel channel)
-    {
-        Configuration.AssignmentChatChannel = P3BlackHoleTracker.GetChatChannelOption(channel).Channel;
-        SaveConfiguration();
-    }
-
-    public static string GetChatChannelLabel(AssignmentChatChannel channel)
-    {
-        return P3BlackHoleTracker.GetChatChannelOption(channel).Label;
+        foreach (var line in BuildP3AssignmentOrderLines(assignments))
+        {
+            queuedPartyChatMessages.Enqueue(line);
+        }
     }
 
     public void SaveConfiguration()
@@ -366,8 +336,20 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnFrameworkUpdate(IFramework framework)
     {
-        p3BlackHoleTracker.FlushQueuedChatMessages(DateTime.UtcNow);
+        FlushQueuedPartyChatMessages(DateTime.UtcNow);
         RefreshStatusSnapshot();
+    }
+
+    private void FlushQueuedPartyChatMessages(DateTime now)
+    {
+        if (queuedPartyChatMessages.Count == 0 || nextQueuedPartyChatMessageAtUtc > now)
+        {
+            return;
+        }
+
+        var nextMessage = queuedPartyChatMessages.Dequeue();
+        SendPartyChatMessage(nextMessage);
+        nextQueuedPartyChatMessageAtUtc = now.AddMilliseconds(QueuedChatDelayMs);
     }
 
     private unsafe void OnReceiveActionEffect(
@@ -410,7 +392,6 @@ public sealed class Plugin : IDalamudPlugin
 
         var nextEntries = new List<PartyStatusEntry>();
         var nextMembers = new List<PartyMemberSnapshot>();
-        var filterToWatched = Configuration.ShowOnlyWatchedStatuses && WatchedStatuses.Count > 0;
         var localContentId = PlayerState.ContentId;
         var localEntityId = ObjectTable.LocalPlayer?.EntityId ?? 0;
         var partyIndex = 0;
@@ -444,7 +425,7 @@ public sealed class Plugin : IDalamudPlugin
                 }
 
                 var isWatched = WatchedStatuses.TryGetValue(status.StatusId, out var watchedStatus);
-                if (filterToWatched && !isWatched)
+                if (!isWatched)
                 {
                     continue;
                 }
@@ -1110,6 +1091,66 @@ public sealed class Plugin : IDalamudPlugin
         activeBossTellKeysLastFrame.Clear();
         pullStartedAtUtc = null;
         lastKnownPullElapsedSeconds = 0.0f;
+    }
+
+    private static IReadOnlyList<string> BuildP3AssignmentOrderLines(IReadOnlyList<P3.LocalPlayerBlackHoleAssignment> assignments)
+    {
+        return GetP3AssignmentChatGroups()
+            .Select(group => new
+            {
+                group.Label,
+                Names = assignments
+                    .Where(assignment => assignment.HasLine)
+                    .Where(assignment => assignment.LineGroup == group.LineGroup && assignment.HadAccretion == group.HadAccretion)
+                    .OrderBy(assignment => assignment.PartyIndex)
+                    .Select(assignment => assignment.MemberName)
+                    .ToList(),
+            })
+            .Where(group => group.Names.Count > 0)
+            .Select(group => $"{group.Label}: {string.Join(", ", group.Names)}")
+            .ToList();
+    }
+
+    private static IReadOnlyList<(string Label, P3.LineGroup LineGroup, bool HadAccretion)> GetP3AssignmentChatGroups()
+    {
+        return
+        [
+            ("FIL", P3.LineGroup.First, false),
+            ("SIL", P3.LineGroup.Second, false),
+            ("TIL", P3.LineGroup.Third, false),
+            ("FIL Accretion", P3.LineGroup.First, true),
+            ("SIL Accretion", P3.LineGroup.Second, true),
+            ("TIL Accretion", P3.LineGroup.Third, true),
+        ];
+    }
+
+    private static unsafe void SendPartyChatMessage(string message)
+    {
+        try
+        {
+            var uiModule = UIModule.Instance();
+            var shellModule = RaptureShellModule.Instance();
+            if (uiModule == null || shellModule == null)
+            {
+                Log.Warning("Could not send DMU helper party chat message because the UI shell is unavailable.");
+                return;
+            }
+
+            using var command = new Utf8String($"/p {SanitizeChatText(message)}");
+            shellModule->ExecuteCommandInner(&command, uiModule);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Could not send DMU helper party chat message.");
+        }
+    }
+
+    private static string SanitizeChatText(string message)
+    {
+        return message
+            .Replace("\r", " ", StringComparison.Ordinal)
+            .Replace("\n", " ", StringComparison.Ordinal)
+            .Trim();
     }
 
     private static string FormatBoss(P4Boss boss)

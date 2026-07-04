@@ -22,8 +22,6 @@ public enum LineGroup
 
 public sealed record WatchedStatus(uint Id, string Name, StatusKind Kind, int SortOrder);
 
-public sealed record SoundEffectOption(int Id, string Label);
-
 public sealed record PartyMemberSnapshot(
     string MemberKey,
     string MemberName,
@@ -111,4 +109,3 @@ public sealed record LocalPlayerBlackHoleAssignment(
         _ => "No line",
     };
 }
-

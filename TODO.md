@@ -7,8 +7,8 @@
 - Repo: `Nainaiowo/dmu-p4-debuff-helper`
 - Puni plugin ID: `162`
 - Dalamud feed URL: `https://puni.sh/api/repository/nainai`
-- Settings commands: `/dmu`, `/dmup3`, `/dmup4`
-- Helper commands: `/dmuh`, `/dmuhelper`, `/dmup3h`, `/dmup3helper`, `/dmup4h`, `/dmup4helper`
+- Settings commands: `/dmu`, `/dmup3`
+- Helper commands: `/dmuh`, `/dmuhelper`, `/dmup3h`, `/dmup3helper`
 - DMU territory ID: `1363`
 
 ## Implemented
@@ -42,5 +42,4 @@
 - [ ] Live-test the boss tell param mapping and confirm every real/fake state against observed pulls.
 - [ ] Decide whether to add Kefka lockon/headmarker event capture for `675`, `676`, `677`, and `678`.
 - [ ] Refine player-specific instructions after the group strat is chosen.
-- [ ] Add optional chat callouts if the mechanic needs them.
 - [ ] Add screenshots after the helper has its real P4 behavior.

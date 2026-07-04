@@ -99,16 +99,16 @@ public sealed class ConfigWindow : Window, IDisposable
         ImGui.Separator();
         ImGui.TextUnformatted("P3 Black Hole");
         DrawStrategySetting();
-        DrawBlackHoleChatSettings();
+        ImGui.TextDisabled("Does not support double tethers, yet.");
 
         ImGui.Separator();
         ImGui.TextUnformatted("P4 Debuffs");
-        DrawP4Settings();
+        ImGui.TextDisabled("P4 debuff detection is automatic. The helper only keeps the P4 debuffs it knows how to resolve.");
 
         ImGui.Separator();
-        ImGui.TextWrapped("The helper only scans while you are in DMU. P4 debuffs take display priority and clear stale P3 live display data when P4 starts.");
-        ImGui.TextWrapped("P4 watches local debuffs and boss tell status 2056, then tags debuffs as real or fake when the tell param is detected.");
-        ImGui.TextColored(ActiveTextColor, "If a P4 tell is not detected, the assignment stays Unknown instead of guessing.");
+        ImGui.TextWrapped("The helper only scans while you are in DMU.");
+        ImGui.TextWrapped("P3 Black Hole appears while assignment data is detected, then disappears when that information is no longer active.");
+        ImGui.TextWrapped("P4 debuffs appear automatically when known P4 debuffs or boss tell status 2056 are detected.");
     }
 
     private void DrawStrategySetting()
@@ -136,114 +136,6 @@ public sealed class ConfigWindow : Window, IDisposable
         }
 
         ImGui.EndCombo();
-    }
-
-    private void DrawBlackHoleChatSettings()
-    {
-        var postInstructionsToChat = configuration.PostBlackHoleInstructionsToChat;
-        if (ImGui.Checkbox("Post my BH job to chat", ref postInstructionsToChat))
-        {
-            plugin.SetPostBlackHoleInstructionsToChat(postInstructionsToChat);
-        }
-
-        if (!postInstructionsToChat)
-        {
-            return;
-        }
-
-        DrawChatChannelSetting();
-        DrawSoundEffectSetting();
-    }
-
-    private void DrawChatChannelSetting()
-    {
-        var selectedChannel = P3BlackHoleTracker.GetChatChannelOption(configuration.AssignmentChatChannel);
-        ImGui.SetNextItemWidth(180.0f);
-        if (!ImGui.BeginCombo("Chat channel", selectedChannel.Label))
-        {
-            return;
-        }
-
-        foreach (var option in P3BlackHoleTracker.ChatChannelOptions)
-        {
-            var isSelected = option.Channel == selectedChannel.Channel;
-            if (ImGui.Selectable(option.Label, isSelected))
-            {
-                plugin.SetAssignmentChatChannel(option.Channel);
-            }
-
-            if (isSelected)
-            {
-                ImGui.SetItemDefaultFocus();
-            }
-        }
-
-        ImGui.EndCombo();
-    }
-
-    private void DrawSoundEffectSetting()
-    {
-        var selectedSound = P3BlackHoleTracker.SoundEffectOptions.FirstOrDefault(option => option.Id == configuration.BlackHoleSoundEffectId) ??
-            P3BlackHoleTracker.SoundEffectOptions[0];
-
-        ImGui.SetNextItemWidth(180.0f);
-        if (ImGui.BeginCombo("Mechanic alert", selectedSound.Label))
-        {
-            foreach (var option in P3BlackHoleTracker.SoundEffectOptions)
-            {
-                var isSelected = option.Id == selectedSound.Id;
-                if (ImGui.Selectable(option.Label, isSelected))
-                {
-                    plugin.SetBlackHoleSoundEffectId(option.Id);
-                }
-
-                if (isSelected)
-                {
-                    ImGui.SetItemDefaultFocus();
-                }
-            }
-
-            ImGui.EndCombo();
-        }
-
-        ImGui.SameLine();
-        var hasSound = selectedSound.Id != 0;
-        if (!hasSound)
-        {
-            ImGui.BeginDisabled();
-        }
-
-        if (ImGui.Button("Test sound") && hasSound)
-        {
-            plugin.TestBlackHoleSoundEffect();
-        }
-
-        if (!hasSound)
-        {
-            ImGui.EndDisabled();
-        }
-    }
-
-    private void DrawP4Settings()
-    {
-        var hasWatchedStatuses = Plugin.WatchedStatuses.Count > 0;
-        var showOnlyWatched = configuration.ShowOnlyWatchedStatuses;
-        if (!hasWatchedStatuses)
-        {
-            ImGui.BeginDisabled();
-        }
-
-        if (ImGui.Checkbox("Show only watched statuses", ref showOnlyWatched) && hasWatchedStatuses)
-        {
-            plugin.SetShowOnlyWatchedStatuses(showOnlyWatched);
-        }
-
-        if (!hasWatchedStatuses)
-        {
-            ImGui.EndDisabled();
-            ImGui.SameLine();
-            ImGui.TextDisabled("No watched P4 statuses configured yet.");
-        }
     }
 
     private void DrawBuffSummaryTab()
@@ -288,9 +180,7 @@ public sealed class ConfigWindow : Window, IDisposable
 
     private bool HasCurrentP3Summary()
     {
-        return plugin.P3BlackHole.CurrentAssignments.Any(assignment => assignment.HasLine) ||
-            plugin.P3BlackHole.CurrentBlackHoleResolutions.Count > 0 ||
-            plugin.P3BlackHole.CurrentPartyDeaths.Count > 0;
+        return plugin.P3BlackHole.CurrentAssignments.Any(assignment => assignment.HasLine);
     }
 
     private void DrawCurrentP3Summary()
@@ -301,32 +191,41 @@ public sealed class ConfigWindow : Window, IDisposable
             return;
         }
 
+        DrawPostP3OrderButton(plugin.P3BlackHole.CurrentAssignments, "Current");
         DrawP3AssignmentSummary(plugin.P3BlackHole.CurrentAssignments, "Current");
-        DrawP3ResolutionSummary(plugin.P3BlackHole.CurrentBlackHoleResolutions, "Current");
-        DrawP3DeathSummary(plugin.P3BlackHole.CurrentPartyDeaths, "Current");
     }
 
-    private static void DrawP3PullHistory(IReadOnlyList<P3.BlackHolePullSnapshot> snapshots)
+    private void DrawP3PullHistory(IReadOnlyList<P3.BlackHolePullSnapshot> snapshots)
     {
-        if (snapshots.Count == 0)
+        var snapshotsWithAssignments = snapshots
+            .Select((snapshot, index) => (Snapshot: snapshot, PullNumber: index + 1))
+            .Where(entry => entry.Snapshot.Assignments.Any(assignment => assignment.HasLine))
+            .ToList();
+        if (snapshotsWithAssignments.Count == 0)
         {
             return;
         }
 
         ImGui.TextUnformatted("Recorded P3 pulls");
-        for (var i = snapshots.Count - 1; i >= 0; i--)
+        foreach (var (snapshot, pullNumber) in snapshotsWithAssignments.OrderByDescending(entry => entry.PullNumber))
         {
-            var snapshot = snapshots[i];
-            var header = $"P3 Pull {i + 1} - Timer {FormatCombatTimer(snapshot.CombatElapsedSeconds)}###P3PullSnapshot{i + 1}";
+            var header = $"P3 Pull {pullNumber} - Timer {FormatCombatTimer(snapshot.CombatElapsedSeconds)}###P3PullSnapshot{pullNumber}";
             if (!ImGui.CollapsingHeader(header))
             {
                 continue;
             }
 
             ImGui.TextDisabled($"{snapshot.Reason} - {snapshot.CapturedAtUtc:HH:mm:ss} UTC");
-            DrawP3AssignmentSummary(snapshot.Assignments, $"Pull{i + 1}");
-            DrawP3ResolutionSummary(snapshot.Resolutions, $"Pull{i + 1}");
-            DrawP3DeathSummary(snapshot.Deaths, $"Pull{i + 1}");
+            DrawPostP3OrderButton(snapshot.Assignments, $"Pull{pullNumber}");
+            DrawP3AssignmentSummary(snapshot.Assignments, $"Pull{pullNumber}");
+        }
+    }
+
+    private void DrawPostP3OrderButton(IReadOnlyList<P3.LocalPlayerBlackHoleAssignment> assignments, string idSuffix)
+    {
+        if (ImGui.Button($"Post order to chat##P3PostOrder{idSuffix}"))
+        {
+            plugin.PostP3AssignmentOrderToChat(assignments);
         }
     }
 
@@ -334,7 +233,8 @@ public sealed class ConfigWindow : Window, IDisposable
     {
         var lineAssignments = assignments
             .Where(assignment => assignment.HasLine)
-            .OrderBy(assignment => assignment.PartyIndex)
+            .OrderBy(GetP3AssignmentSortKey)
+            .ThenBy(assignment => assignment.PartyIndex)
             .ToList();
         ImGui.TextUnformatted("Assignments");
         if (lineAssignments.Count == 0)
@@ -367,56 +267,18 @@ public sealed class ConfigWindow : Window, IDisposable
         ImGui.EndTable();
     }
 
-    private static void DrawP3ResolutionSummary(IReadOnlyList<P3.BlackHoleResolutionRecord> resolutions, string idSuffix)
+    private static int GetP3AssignmentSortKey(P3.LocalPlayerBlackHoleAssignment assignment)
     {
-        ImGui.TextUnformatted("Black Hole hits");
-        if (resolutions.Count == 0)
+        return (assignment.HadAccretion, assignment.LineGroup) switch
         {
-            ImGui.TextDisabled("No Black Hole hit records.");
-            return;
-        }
-
-        foreach (var resolution in resolutions.OrderBy(resolution => resolution.SeenAtUtc))
-        {
-            var hits = string.Join(", ", resolution.Hits.OrderBy(hit => hit.PartyIndex).Select(hit => hit.MemberName));
-            ImGui.BulletText($"{resolution.Wave.Label}: {resolution.ActionName} -> {hits}");
-        }
-    }
-
-    private static void DrawP3DeathSummary(IReadOnlyList<P3.PartyDeathRecord> deaths, string idSuffix)
-    {
-        ImGui.TextUnformatted("Deaths");
-        if (deaths.Count == 0)
-        {
-            ImGui.TextDisabled("No P3 deaths recorded.");
-            return;
-        }
-
-        if (!ImGui.BeginTable($"##P3Deaths{idSuffix}", 4, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
-        {
-            return;
-        }
-
-        ImGui.TableSetupColumn("Time");
-        ImGui.TableSetupColumn("Player");
-        ImGui.TableSetupColumn("Cause");
-        ImGui.TableSetupColumn("Wave");
-        ImGui.TableHeadersRow();
-
-        foreach (var death in deaths.OrderBy(death => death.CombatElapsedSeconds))
-        {
-            ImGui.TableNextRow();
-            ImGui.TableNextColumn();
-            ImGui.TextUnformatted(FormatCombatTimer(death.CombatElapsedSeconds));
-            ImGui.TableNextColumn();
-            ImGui.TextUnformatted(death.MemberName);
-            ImGui.TableNextColumn();
-            ImGui.TextUnformatted(death.ActionName);
-            ImGui.TableNextColumn();
-            ImGui.TextUnformatted(death.Wave?.Label ?? "--");
-        }
-
-        ImGui.EndTable();
+            (false, P3.LineGroup.First) => 0,
+            (false, P3.LineGroup.Second) => 1,
+            (false, P3.LineGroup.Third) => 2,
+            (true, P3.LineGroup.First) => 3,
+            (true, P3.LineGroup.Second) => 4,
+            (true, P3.LineGroup.Third) => 5,
+            _ => 99,
+        };
     }
 
     private bool HasCurrentPullSummary()
