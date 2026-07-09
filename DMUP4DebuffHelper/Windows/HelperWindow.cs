@@ -166,8 +166,8 @@ public sealed class HelperWindow : Window, IDisposable
         }
 
         ImGui.TableSetupColumn("Set");
-        ImGui.TableSetupColumn("Wave");
         ImGui.TableSetupColumn("Tether");
+        ImGui.TableSetupColumn("Wave");
         ImGui.TableSetupColumn("Action");
         ImGui.TableHeadersRow();
 
@@ -177,9 +177,9 @@ public sealed class HelperWindow : Window, IDisposable
             ImGui.TableNextColumn();
             ImGui.TextUnformatted(instruction.Set.ToString());
             ImGui.TableNextColumn();
-            ImGui.TextUnformatted(instruction.Wave.ToString());
-            ImGui.TableNextColumn();
             ImGui.TextUnformatted(instruction.Tether.ToString());
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(instruction.Wave.ToString());
             ImGui.TableNextColumn();
             ImGui.TextWrapped(instruction.Action);
         }
