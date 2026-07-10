@@ -19,6 +19,7 @@ public sealed class HelperWindow : Window, IDisposable
     private static readonly Vector4 FakeColor = new(1.0f, 0.28f, 0.22f, 1.0f);
     private static readonly Vector4 UnknownColor = new(0.75f, 0.75f, 0.75f, 1.0f);
     private static readonly Vector4 UrgentColor = new(1.0f, 0.42f, 0.28f, 1.0f);
+    private static readonly Vector4 TimerTextColor = new(0.94f, 0.98f, 1.0f, 1.0f);
     private static readonly Vector4 PanelBorderColor = new(1.0f, 1.0f, 1.0f, 0.18f);
     private static readonly Vector4 PanelFillColor = new(0.02f, 0.025f, 0.03f, 0.32f);
     private static readonly Vector4 PreviewButtonColor = new(0.85f, 0.62f, 0.18f, 0.72f);
@@ -704,7 +705,7 @@ public sealed class HelperWindow : Window, IDisposable
         ImGui.SetCursorPosX(start.X + MathF.Max(0.0f, (width - AssignmentIconSize) * 0.5f));
         DrawStatusIconWithBorder(assignment.Entry.IconId, AssignmentIconSize, borderColor, FormatAssignmentTooltip(assignment));
         ImGui.SetCursorPosX(start.X + MathF.Max(0.0f, (width - timerSize.X) * 0.5f));
-        ImGui.TextDisabled(timerText);
+        ImGui.TextColored(TimerTextColor, timerText);
         ImGui.EndGroup();
 
         if (ImGui.IsItemHovered())

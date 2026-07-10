@@ -33,6 +33,7 @@ public sealed class Plugin : IDalamudPlugin
     private const uint DmuTerritoryId = 1363;
     private const uint BossTellStatusId = 2056;
     private const int QueuedChatDelayMs = 200;
+    private const float StatusTimerAnchorRefreshThreshold = 0.05f;
     private static readonly TimeSpan BossTellFreshness = TimeSpan.FromSeconds(20);
 
     internal static readonly IReadOnlyDictionary<uint, WatchedStatus> WatchedStatuses =
@@ -90,6 +91,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Dictionary<uint, uint> statusIconCache = new();
     private readonly Dictionary<string, BossTellSnapshot> latestBossTells = new(StringComparer.Ordinal);
     private readonly Dictionary<string, CapturedDebuffState> capturedDebuffStates = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, StatusTimerAnchor> statusTimerAnchors = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> activeDebuffRecordIndexes = new(StringComparer.Ordinal);
     private readonly HashSet<string> activeDebuffKeysLastFrame = new(StringComparer.Ordinal);
     private readonly HashSet<string> activeBossTellKeysLastFrame = new(StringComparer.Ordinal);
@@ -382,6 +384,7 @@ public sealed class Plugin : IDalamudPlugin
             currentBossTells.Clear();
             latestBossTells.Clear();
             capturedDebuffStates.Clear();
+            statusTimerAnchors.Clear();
             activeBossTellKeysLastFrame.Clear();
             ResetPullState();
             p4SeenThisPull = false;
@@ -392,6 +395,7 @@ public sealed class Plugin : IDalamudPlugin
 
         var nextEntries = new List<PartyStatusEntry>();
         var nextMembers = new List<PartyMemberSnapshot>();
+        var now = DateTime.UtcNow;
         var localContentId = PlayerState.ContentId;
         var localEntityId = ObjectTable.LocalPlayer?.EntityId ?? 0;
         var partyIndex = 0;
@@ -430,18 +434,19 @@ public sealed class Plugin : IDalamudPlugin
                     continue;
                 }
 
+                var entryKey = $"{memberKey}:{status.StatusId}";
                 nextEntries.Add(new PartyStatusEntry(
-                    $"{memberKey}:{status.StatusId}",
+                    entryKey,
                     memberKey,
                     memberName,
                     partyIndex,
                     status.StatusId,
                     isWatched ? watchedStatus!.Name : GetStatusName(status.StatusId),
                     GetStatusIconId(status.StatusId),
-                    status.RemainingTime,
+                    GetSmoothedStatusRemainingTime(entryKey, status.RemainingTime, now),
                     isWatched,
                     isWatched ? watchedStatus!.SortOrder : 10_000 + partyIndex,
-                    DateTime.UtcNow));
+                    now));
             }
 
             partyIndex++;
@@ -456,6 +461,7 @@ public sealed class Plugin : IDalamudPlugin
             .ThenBy(entry => entry.PartyIndex)
             .ThenBy(entry => entry.MemberName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(entry => entry.StatusId));
+        PruneStatusTimerAnchors(currentEntries);
 
         RefreshBossTellSnapshots();
         RefreshAssignments();
@@ -1042,6 +1048,7 @@ public sealed class Plugin : IDalamudPlugin
         currentBossTells.Clear();
         latestBossTells.Clear();
         capturedDebuffStates.Clear();
+        statusTimerAnchors.Clear();
         activeBossTellKeysLastFrame.Clear();
         ResetPullState();
         p4SeenThisPull = false;
@@ -1080,6 +1087,42 @@ public sealed class Plugin : IDalamudPlugin
             currentPullBossTells.Count > 0 ||
             currentAssignments.Count > 0 ||
             currentBossTells.Count > 0;
+    }
+
+    private float GetSmoothedStatusRemainingTime(string key, float sourceRemainingTime, DateTime now)
+    {
+        if (sourceRemainingTime <= 0.0f)
+        {
+            statusTimerAnchors.Remove(key);
+            return sourceRemainingTime;
+        }
+
+        if (!statusTimerAnchors.TryGetValue(key, out var anchor) ||
+            MathF.Abs(sourceRemainingTime - anchor.SourceRemainingTime) >= StatusTimerAnchorRefreshThreshold)
+        {
+            anchor = new StatusTimerAnchor(sourceRemainingTime, now);
+            statusTimerAnchors[key] = anchor;
+        }
+
+        var elapsedSeconds = (float)(now - anchor.SeenAtUtc).TotalSeconds;
+        return MathF.Max(0.0f, anchor.SourceRemainingTime - elapsedSeconds);
+    }
+
+    private void PruneStatusTimerAnchors(IReadOnlyList<PartyStatusEntry> activeEntries)
+    {
+        if (statusTimerAnchors.Count == 0)
+        {
+            return;
+        }
+
+        var activeKeys = activeEntries.Select(entry => entry.Key).ToHashSet(StringComparer.Ordinal);
+        foreach (var key in statusTimerAnchors.Keys.ToArray())
+        {
+            if (!activeKeys.Contains(key))
+            {
+                statusTimerAnchors.Remove(key);
+            }
+        }
     }
 
     private void ResetPullState()
@@ -1184,4 +1227,6 @@ public sealed class Plugin : IDalamudPlugin
             _ => "Unknown",
         };
     }
+
+    private sealed record StatusTimerAnchor(float SourceRemainingTime, DateTime SeenAtUtc);
 }
