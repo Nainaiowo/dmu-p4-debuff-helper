@@ -67,7 +67,6 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IDutyState DutyState { get; private set; } = null!;
     [PluginService] internal static IPlayerState PlayerState { get; private set; } = null!;
     [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
-    [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
     [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
@@ -86,7 +85,6 @@ public sealed class Plugin : IDalamudPlugin
     private readonly List<BossTellSnapshot> currentPullBossTells = [];
     private readonly List<P4DebuffRecord> currentPullDebuffRecords = [];
     private readonly List<P4PullSnapshot> pullSnapshots = [];
-    private readonly Dictionary<string, PartyStatusEntry> debugKnownEntries = new(StringComparer.Ordinal);
     private readonly Dictionary<uint, string> statusNameCache = new();
     private readonly Dictionary<uint, uint> statusIconCache = new();
     private readonly Dictionary<string, BossTellSnapshot> latestBossTells = new(StringComparer.Ordinal);
@@ -95,15 +93,12 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Dictionary<string, int> activeDebuffRecordIndexes = new(StringComparer.Ordinal);
     private readonly HashSet<string> activeDebuffKeysLastFrame = new(StringComparer.Ordinal);
     private readonly HashSet<string> activeBossTellKeysLastFrame = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string> debugKnownAssignments = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, ushort> debugKnownBossTellParams = new(StringComparer.Ordinal);
     private readonly HashSet<string> registeredCommands = new(StringComparer.OrdinalIgnoreCase);
     private readonly Queue<string> queuedPartyChatMessages = [];
     private Hook<ActionEffectHandler.Delegates.Receive>? actionEffectHook;
     private DateTime? pullStartedAtUtc;
     private DateTime nextQueuedPartyChatMessageAtUtc = DateTime.MinValue;
     private float lastKnownPullElapsedSeconds;
-    private bool debugRecognizedTerritory;
     private bool p4SeenThisPull;
 
     public Configuration Configuration { get; }
@@ -244,6 +239,11 @@ public sealed class Plugin : IDalamudPlugin
         configWindow.Toggle();
     }
 
+    public void OpenConfigUi()
+    {
+        configWindow.IsOpen = true;
+    }
+
     public void ToggleHelperUi()
     {
         helperWindow.Toggle();
@@ -268,18 +268,6 @@ public sealed class Plugin : IDalamudPlugin
     public void SetPreviewWhenInactive(bool enabled)
     {
         Configuration.PreviewWhenInactive = enabled;
-        SaveConfiguration();
-    }
-
-    public void SetDebugChat(bool enabled)
-    {
-        Configuration.DebugChat = enabled;
-        if (enabled)
-        {
-            debugRecognizedTerritory = false;
-            debugKnownEntries.Clear();
-        }
-
         SaveConfiguration();
     }
 
@@ -388,7 +376,6 @@ public sealed class Plugin : IDalamudPlugin
             activeBossTellKeysLastFrame.Clear();
             ResetPullState();
             p4SeenThisPull = false;
-            UpdateDebugState(inDmu: false, []);
             UpdateDisplayMode();
             return;
         }
@@ -467,7 +454,6 @@ public sealed class Plugin : IDalamudPlugin
         RefreshAssignments();
         RefreshLocalAssignments();
         UpdatePullTracking();
-        UpdateDebugState(inDmu: true, currentEntries);
         var p4LiveSignal = HasP4LiveSignal();
         if (p4LiveSignal && !p4SeenThisPull)
         {
@@ -943,95 +929,6 @@ public sealed class Plugin : IDalamudPlugin
         return iconId;
     }
 
-    private void UpdateDebugState(bool inDmu, IReadOnlyList<PartyStatusEntry> entries)
-    {
-        if (!Configuration.DebugChat)
-        {
-            debugRecognizedTerritory = inDmu;
-            debugKnownEntries.Clear();
-            debugKnownAssignments.Clear();
-            debugKnownBossTellParams.Clear();
-            foreach (var entry in entries)
-            {
-                debugKnownEntries[entry.Key] = entry;
-            }
-
-            return;
-        }
-
-        if (inDmu && !debugRecognizedTerritory)
-        {
-            PrintDebug("Recognized Dancing Mad Ultimate.");
-        }
-        else if (!inDmu && debugRecognizedTerritory)
-        {
-            PrintDebug("Left Dancing Mad Ultimate.");
-        }
-
-        foreach (var tell in currentBossTells)
-        {
-            var key = GetTellKey(tell.Boss, tell.Group);
-            if (debugKnownBossTellParams.TryGetValue(key, out var knownParam) && knownParam == tell.Param)
-            {
-                continue;
-            }
-
-            PrintDebug($"{FormatBoss(tell.Boss)} {FormatGroup(tell.Group)} tell {tell.Param} ({FormatReality(tell.Reality)}).");
-            debugKnownBossTellParams[key] = tell.Param;
-        }
-
-        var nextEntries = entries.ToDictionary(entry => entry.Key, StringComparer.Ordinal);
-        foreach (var entry in nextEntries.Values)
-        {
-            if (!debugKnownEntries.ContainsKey(entry.Key))
-            {
-                PrintDebug($"{entry.MemberName} gained {entry.StatusName} ({entry.StatusId}).");
-            }
-        }
-
-        foreach (var entry in debugKnownEntries.Values)
-        {
-            if (!nextEntries.ContainsKey(entry.Key))
-            {
-                PrintDebug($"{entry.MemberName} lost {entry.StatusName} ({entry.StatusId}).");
-            }
-        }
-
-        var nextAssignments = currentAssignments.ToDictionary(
-            assignment => assignment.Entry.Key,
-            assignment => $"{FormatReality(assignment.Reality)}:{assignment.TellParam}",
-            StringComparer.Ordinal);
-        foreach (var assignment in currentAssignments)
-        {
-            var value = nextAssignments[assignment.Entry.Key];
-            if (debugKnownAssignments.TryGetValue(assignment.Entry.Key, out var knownValue) && knownValue == value)
-            {
-                continue;
-            }
-
-            var tellText = assignment.TellParam is { } tellParam ? $" tell {tellParam}" : " no tell";
-            PrintDebug($"{assignment.Entry.MemberName}: {assignment.Rule.Name} = {FormatReality(assignment.Reality)} ({tellText}). {assignment.Instruction}");
-        }
-
-        debugRecognizedTerritory = inDmu;
-        debugKnownEntries.Clear();
-        foreach (var entry in nextEntries.Values)
-        {
-            debugKnownEntries[entry.Key] = entry;
-        }
-
-        debugKnownAssignments.Clear();
-        foreach (var (key, value) in nextAssignments)
-        {
-            debugKnownAssignments[key] = value;
-        }
-    }
-
-    private static void PrintDebug(string message)
-    {
-        ChatGui.Print($"[DMU Helper] {message}");
-    }
-
     private void OnDutyReset(IDutyStateEventArgs args)
     {
         if (args.TerritoryType.RowId != DmuTerritoryId)
@@ -1194,38 +1091,6 @@ public sealed class Plugin : IDalamudPlugin
             .Replace("\r", " ", StringComparison.Ordinal)
             .Replace("\n", " ", StringComparison.Ordinal)
             .Trim();
-    }
-
-    private static string FormatBoss(P4Boss boss)
-    {
-        return boss switch
-        {
-            P4Boss.NeoExdeath => "Neo Exdeath",
-            P4Boss.Chaos => "Chaos",
-            P4Boss.Kefka => "Kefka",
-            _ => "Unknown boss",
-        };
-    }
-
-    private static string FormatGroup(P4MechanicGroup group)
-    {
-        return group switch
-        {
-            P4MechanicGroup.GrandCross => "Grand Cross",
-            P4MechanicGroup.Chaos => "Chaos",
-            P4MechanicGroup.Flood => "Flood",
-            _ => "Raw",
-        };
-    }
-
-    private static string FormatReality(RealityState reality)
-    {
-        return reality switch
-        {
-            RealityState.Real => "Real",
-            RealityState.Fake => "Fake",
-            _ => "Unknown",
-        };
     }
 
     private sealed record StatusTimerAnchor(float SourceRemainingTime, DateTime SeenAtUtc);

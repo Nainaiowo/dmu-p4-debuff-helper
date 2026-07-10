@@ -46,7 +46,6 @@ public sealed class P3BlackHoleTracker
     private readonly HashSet<string> accretionHistory = new(StringComparer.Ordinal);
     private readonly Dictionary<string, P3.PartyStatusEntry> lineHistory = new(StringComparer.Ordinal);
     private readonly Dictionary<string, P3.PartyDeathRecord> lastIncomingActionByMember = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, P3.PartyStatusEntry> debugKnownEntries = new(StringComparer.Ordinal);
     private readonly Dictionary<uint, string> actionNameCache = new();
     private readonly HashSet<string> capturedBlackHoleResolutionKeys = new(StringComparer.Ordinal);
     private readonly HashSet<string> deadMemberKeys = new(StringComparer.Ordinal);
@@ -61,7 +60,6 @@ public sealed class P3BlackHoleTracker
     private int primordialCrustPulseCount;
     private int earthPulseCount;
     private float lastKnownBlackHoleElapsedSeconds;
-    private bool debugRecognizedTerritory;
 
     public P3BlackHoleTracker(Plugin plugin)
     {
@@ -113,7 +111,6 @@ public sealed class P3BlackHoleTracker
         if (suppressLiveForP4)
         {
             ClearLiveDisplay("P4 detected");
-            UpdateDebugState(inDmu: true, []);
             return;
         }
 
@@ -155,7 +152,6 @@ public sealed class P3BlackHoleTracker
         CaptureCurrentPullSnapshot("Left DMU");
         ClearCurrentState();
         ResetBlackHoleState();
-        UpdateDebugState(inDmu: false, []);
     }
 
     private void ClearCurrentState()
@@ -254,7 +250,6 @@ public sealed class P3BlackHoleTracker
         LocalAssignment = BuildLocalAssignment();
         UpdateBlackHoleState(currentEntries);
         UpdatePartyDeathTimeline(nextDeathStates);
-        UpdateDebugState(inDmu: true, currentEntries);
     }
 
     private void UpdateBlackHoleState(IReadOnlyList<P3.PartyStatusEntry> entries)
@@ -643,11 +638,6 @@ public sealed class P3BlackHoleTracker
             GetActionName(header->ActionId),
             hits));
 
-        if (plugin.Configuration.DebugChat)
-        {
-            var hitNames = string.Join(", ", hits.Select(hit => hit.MemberName));
-            PrintDebug($"Captured {GetActionName(header->ActionId)} ({header->ActionId}) for {wave.Label}: {hitNames}.");
-        }
     }
 
     private IReadOnlyList<P3.LocalPlayerBlackHoleAssignment> GetExpectedAssignmentsForWave(P3.BlackHoleWave wave)
@@ -739,59 +729,6 @@ public sealed class P3BlackHoleTracker
             .Where(instruction => instruction.IsForWave(wave))
             .OrderBy(instruction => instruction.Tether)
             .ToList();
-    }
-
-    private void UpdateDebugState(bool inDmu, IReadOnlyList<P3.PartyStatusEntry> entries)
-    {
-        if (!plugin.Configuration.DebugChat)
-        {
-            debugRecognizedTerritory = inDmu;
-            debugKnownEntries.Clear();
-            foreach (var entry in entries)
-            {
-                debugKnownEntries[entry.Key] = entry;
-            }
-
-            return;
-        }
-
-        if (inDmu && !debugRecognizedTerritory)
-        {
-            PrintDebug("Recognized Dancing Mad Ultimate.");
-        }
-        else if (!inDmu && debugRecognizedTerritory)
-        {
-            PrintDebug("Left Dancing Mad Ultimate.");
-        }
-
-        var nextEntries = entries.ToDictionary(entry => entry.Key, StringComparer.Ordinal);
-        foreach (var entry in nextEntries.Values)
-        {
-            if (!debugKnownEntries.ContainsKey(entry.Key))
-            {
-                PrintDebug($"{entry.MemberName} gained {entry.StatusName}.");
-            }
-        }
-
-        foreach (var entry in debugKnownEntries.Values)
-        {
-            if (!nextEntries.ContainsKey(entry.Key))
-            {
-                PrintDebug($"{entry.MemberName} lost {entry.StatusName}.");
-            }
-        }
-
-        debugRecognizedTerritory = inDmu;
-        debugKnownEntries.Clear();
-        foreach (var entry in nextEntries.Values)
-        {
-            debugKnownEntries[entry.Key] = entry;
-        }
-    }
-
-    private static void PrintDebug(string message)
-    {
-        Plugin.ChatGui.Print($"[DMU Helper] {message}");
     }
 
     private P3.LocalPlayerBlackHoleAssignment? BuildLocalAssignment()

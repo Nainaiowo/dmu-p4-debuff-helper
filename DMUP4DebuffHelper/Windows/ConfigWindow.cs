@@ -90,12 +90,6 @@ public sealed class ConfigWindow : Window, IDisposable
             plugin.SetHelperBackgroundOpacity(helperBackgroundOpacity);
         }
 
-        var debugChat = configuration.DebugChat;
-        if (ImGui.Checkbox("Debug chat", ref debugChat))
-        {
-            plugin.SetDebugChat(debugChat);
-        }
-
         ImGui.Separator();
         ImGui.TextUnformatted("P3 Black Hole");
         DrawStrategySetting();

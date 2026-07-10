@@ -13,8 +13,6 @@ public sealed class Configuration : IPluginConfiguration
 
     public bool PreviewWhenInactive { get; set; }
 
-    public bool DebugChat { get; set; }
-
     public bool HelperCollapsed { get; set; }
 
     public BlackHoleStrategyKind SelectedBlackHoleStrategy { get; set; } = BlackHoleStrategyKind.Standard;

@@ -1,4 +1,6 @@
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
+using Dalamud.Interface.Components;
 using Dalamud.Interface.Textures;
 using Dalamud.Interface.Windowing;
 using System;
@@ -18,7 +20,6 @@ public sealed class HelperWindow : Window, IDisposable
     private static readonly Vector4 RealColor = new(0.25f, 0.85f, 1.0f, 1.0f);
     private static readonly Vector4 FakeColor = new(1.0f, 0.28f, 0.22f, 1.0f);
     private static readonly Vector4 UnknownColor = new(0.75f, 0.75f, 0.75f, 1.0f);
-    private static readonly Vector4 UrgentColor = new(1.0f, 0.42f, 0.28f, 1.0f);
     private static readonly Vector4 TimerTextColor = new(0.94f, 0.98f, 1.0f, 1.0f);
     private static readonly Vector4 PanelBorderColor = new(1.0f, 1.0f, 1.0f, 0.18f);
     private static readonly Vector4 PanelFillColor = new(0.02f, 0.025f, 0.03f, 0.32f);
@@ -108,11 +109,6 @@ public sealed class HelperWindow : Window, IDisposable
         }
 
         var nextAssignments = assignments.Take(2).ToList();
-        if (nextAssignments.Any(IsUrgent))
-        {
-            ImGui.TextColored(UrgentColor, "Resolving soon");
-        }
-
         DrawSection("Active", assignments, "Active");
         ImGui.Spacing();
         DrawSection("Next 2", nextAssignments, "Next");
@@ -493,25 +489,57 @@ public sealed class HelperWindow : Window, IDisposable
 
         ImGui.SameLine(0.0f, 4.0f);
         ImGui.TextColored(GoldColor, title);
-        DrawPreviewToggleButton();
+        DrawHeaderActions();
         if (hovered)
         {
             ImGui.SetTooltip(isExpanded ? "Collapse DMU helper." : "Expand DMU helper.");
         }
     }
 
-    private void DrawPreviewToggleButton()
+    private void DrawHeaderActions()
+    {
+        var previewButtonWidth = GetPreviewToggleButtonWidth();
+        var settingsButtonWidth = GetSettingsButtonWidth();
+        var spacing = ImGui.GetStyle().ItemSpacing.X;
+        var totalWidth = previewButtonWidth + spacing + settingsButtonWidth;
+        var contentRight = ImGui.GetWindowContentRegionMax().X;
+        var currentLineStart = ImGui.GetCursorPosX();
+        var targetX = MathF.Max(currentLineStart, contentRight - totalWidth);
+
+        ImGui.SameLine();
+        ImGui.SetCursorPosX(targetX);
+        DrawPreviewToggleButton(previewButtonWidth);
+
+        ImGui.SameLine(0.0f, spacing);
+        if (ImGuiComponents.IconButton("##OpenDMUHelperSettings", FontAwesomeIcon.Cog))
+        {
+            plugin.OpenConfigUi();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("Open DMU Helper settings.");
+        }
+    }
+
+    private float GetPreviewToggleButtonWidth()
     {
         var enabled = plugin.Configuration.PreviewWhenInactive;
         var label = enabled ? "Preview on" : "Preview off";
         var style = ImGui.GetStyle();
-        var buttonWidth = MathF.Max(92.0f, ImGui.CalcTextSize(label).X + style.FramePadding.X * 2.0f + 8.0f);
-        var contentRight = ImGui.GetWindowContentRegionMax().X;
-        var currentLineStart = ImGui.GetCursorPosX();
-        var targetX = MathF.Max(currentLineStart, contentRight - buttonWidth);
+        return MathF.Max(92.0f, ImGui.CalcTextSize(label).X + style.FramePadding.X * 2.0f + 8.0f);
+    }
 
-        ImGui.SameLine();
-        ImGui.SetCursorPosX(targetX);
+    private static float GetSettingsButtonWidth()
+    {
+        var style = ImGui.GetStyle();
+        return ImGui.CalcTextSize(FontAwesomeIcon.Cog.ToIconString()).X + style.FramePadding.X * 2.0f;
+    }
+
+    private void DrawPreviewToggleButton(float buttonWidth)
+    {
+        var enabled = plugin.Configuration.PreviewWhenInactive;
+        var label = enabled ? "Preview on" : "Preview off";
         ImGui.PushStyleColor(ImGuiCol.Button, enabled ? PreviewButtonColor : PreviewButtonOffColor);
         ImGui.PushStyleColor(ImGuiCol.ButtonHovered, enabled ? PreviewButtonHoverColor : PreviewButtonOffHoverColor);
         ImGui.PushStyleColor(ImGuiCol.ButtonActive, enabled ? PreviewButtonHoverColor : PreviewButtonOffHoverColor);
@@ -840,11 +868,6 @@ public sealed class HelperWindow : Window, IDisposable
     private static string FormatRemainingTime(float remainingTime)
     {
         return remainingTime > 0.0f ? $"{remainingTime:0.0}s" : "-";
-    }
-
-    private static bool IsUrgent(P4DebuffAssignment assignment)
-    {
-        return assignment.Entry.RemainingTime > 0.0f && assignment.Entry.RemainingTime <= 10.0f;
     }
 
     private static Vector4 GetRealityColor(RealityState reality)
