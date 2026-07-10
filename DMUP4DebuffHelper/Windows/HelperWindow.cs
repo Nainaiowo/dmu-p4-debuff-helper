@@ -27,16 +27,17 @@ public sealed class HelperWindow : Window, IDisposable
     private static readonly Vector4 PreviewButtonOffHoverColor = new(0.25f, 0.25f, 0.28f, 0.92f);
     private const float HelperPadding = 10.0f;
     private const float AssignmentIconSize = 30.0f;
+    private const float AccretionJobIconSize = 28.0f;
     private static readonly IReadOnlyList<P3PreviewRole> P3PreviewRoles =
     [
-        new(P3.LineGroup.First, IsDps: true, HadAccretion: false, "FIL DPS"),
-        new(P3.LineGroup.Second, IsDps: true, HadAccretion: false, "SIL DPS"),
-        new(P3.LineGroup.Third, IsDps: true, HadAccretion: false, "TIL DPS"),
-        new(P3.LineGroup.First, IsDps: false, HadAccretion: false, "FIL Support"),
-        new(P3.LineGroup.Second, IsDps: false, HadAccretion: false, "SIL Support"),
-        new(P3.LineGroup.Third, IsDps: false, HadAccretion: false, "TIL Support"),
-        new(P3.LineGroup.First, IsDps: true, HadAccretion: true, "FIL Accretion"),
-        new(P3.LineGroup.Second, IsDps: true, HadAccretion: true, "SIL Accretion"),
+        new(P3.LineGroup.First, true, false, 41, "FIL DPS"),
+        new(P3.LineGroup.Second, true, false, 41, "SIL DPS"),
+        new(P3.LineGroup.Third, true, false, 41, "TIL DPS"),
+        new(P3.LineGroup.First, false, false, 24, "FIL Support"),
+        new(P3.LineGroup.Second, false, false, 24, "SIL Support"),
+        new(P3.LineGroup.Third, false, false, 24, "TIL Support"),
+        new(P3.LineGroup.First, true, true, 41, "FIL Accretion"),
+        new(P3.LineGroup.Second, true, true, 41, "SIL Accretion"),
     ];
 
     public HelperWindow(Plugin plugin) : base("DMU Helper###DMUP4DebuffHelper")
@@ -63,7 +64,7 @@ public sealed class HelperWindow : Window, IDisposable
                 DrawP4View(GetOrderedAssignments(plugin.CurrentAssignments), isPreview: false);
                 break;
             case DmuHelperDisplayMode.P3BlackHole:
-                DrawP3View(plugin.P3BlackHole.LocalAssignment, isPreview: false);
+                DrawP3View(plugin.P3BlackHole.LocalAssignment, plugin.P3BlackHole.CurrentAssignments, isPreview: false);
                 break;
             case DmuHelperDisplayMode.Preview:
                 DrawPreviewView();
@@ -116,7 +117,10 @@ public sealed class HelperWindow : Window, IDisposable
         DrawSection("Next 2", nextAssignments, "Next");
     }
 
-    private void DrawP3View(P3.LocalPlayerBlackHoleAssignment? assignment, bool isPreview)
+    private void DrawP3View(
+        P3.LocalPlayerBlackHoleAssignment? assignment,
+        IReadOnlyList<P3.LocalPlayerBlackHoleAssignment> assignments,
+        bool isPreview)
     {
         var instructionCount = P3.BlackHoleStrategy.GetInstructionsFor(assignment, plugin.Configuration.SelectedBlackHoleStrategy).Count;
         DrawHeader(isPreview ? "P3 Black Hole Preview" : "P3 Black Hole", instructionCount, isPreview);
@@ -126,30 +130,28 @@ public sealed class HelperWindow : Window, IDisposable
         }
 
         ImGui.Spacing();
-        DrawP3Content(assignment);
+        DrawP3Content(assignment, assignments);
     }
 
-    private void DrawP3Content(P3.LocalPlayerBlackHoleAssignment? assignment)
+    private void DrawP3Content(
+        P3.LocalPlayerBlackHoleAssignment? assignment,
+        IReadOnlyList<P3.LocalPlayerBlackHoleAssignment> assignments)
     {
-        ImGui.TextUnformatted("Your Black Hole assignment");
         if (assignment is null)
         {
+            ImGui.TextUnformatted("Your Black Hole assignment");
             ImGui.TextDisabled("Local player not found.");
             return;
         }
 
         if (!assignment.HasLine)
         {
+            ImGui.TextUnformatted("Your Black Hole assignment");
             ImGui.TextDisabled("Waiting for your line debuff.");
             return;
         }
 
-        DrawStatusIcon(assignment.LineStatusId, assignment.LineName);
-        if (assignment.HadAccretion)
-        {
-            ImGui.SameLine();
-            DrawStatusIcon(1604, "Accretion");
-        }
+        DrawP3AssignmentOverview(assignment, assignments);
 
         ImGui.Separator();
         ImGui.TextUnformatted("Your Black Hole instructions");
@@ -187,6 +189,136 @@ public sealed class HelperWindow : Window, IDisposable
         ImGui.EndTable();
     }
 
+    private void DrawP3AssignmentOverview(
+        P3.LocalPlayerBlackHoleAssignment assignment,
+        IReadOnlyList<P3.LocalPlayerBlackHoleAssignment> assignments)
+    {
+        var overviewAssignments = assignments.Count > 0
+            ? assignments
+            : [assignment];
+        var availableWidth = ImGui.GetContentRegionAvail().X;
+        if (availableWidth >= 280.0f &&
+            ImGui.BeginTable("##P3AssignmentOverview", 2, ImGuiTableFlags.SizingStretchProp))
+        {
+            ImGui.TableSetupColumn("Assignment");
+            ImGui.TableSetupColumn("Accretion");
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            DrawP3LocalAssignmentBlock(assignment);
+            ImGui.TableNextColumn();
+            DrawP3AccretionBlock(overviewAssignments);
+            ImGui.EndTable();
+            return;
+        }
+
+        DrawP3LocalAssignmentBlock(assignment);
+        ImGui.Spacing();
+        DrawP3AccretionBlock(overviewAssignments);
+    }
+
+    private void DrawP3LocalAssignmentBlock(P3.LocalPlayerBlackHoleAssignment assignment)
+    {
+        ImGui.TextUnformatted("Your Black Hole assignment");
+        DrawStatusIcon(assignment.LineStatusId, assignment.LineName);
+        if (assignment.HadAccretion)
+        {
+            ImGui.SameLine();
+            DrawStatusIcon(1604, "Accretion");
+        }
+
+        ImGui.TextColored(GoldColor, assignment.RoleName);
+    }
+
+    private static void DrawP3AccretionBlock(IReadOnlyList<P3.LocalPlayerBlackHoleAssignment> assignments)
+    {
+        ImGui.TextUnformatted("Accretions");
+        ImGui.Separator();
+        var accretions = assignments
+            .Where(assignment => assignment is { HasLine: true, HadAccretion: true })
+            .OrderBy(assignment => assignment.IsDps)
+            .ThenBy(assignment => assignment.PartyIndex)
+            .ToList();
+        var healerAccretion = accretions.FirstOrDefault(assignment => !assignment.IsDps);
+        var dpsAccretion = accretions.FirstOrDefault(assignment => assignment.IsDps);
+
+        DrawAccretionJobIcon(healerAccretion, "Waiting for healer Accretion", "Healer Accretion");
+        ImGui.SameLine(0.0f, ImGui.GetStyle().ItemSpacing.X);
+        DrawAccretionJobIcon(dpsAccretion, "Waiting for DPS Accretion", "DPS Accretion");
+    }
+
+    private static void DrawAccretionJobIcon(
+        P3.LocalPlayerBlackHoleAssignment? assignment,
+        string waitingTooltip,
+        string readyTooltip)
+    {
+        if (assignment is null)
+        {
+            DrawClassJobPlaceholder(AccretionJobIconSize, waitingTooltip);
+        }
+        else
+        {
+            DrawClassJobIcon(assignment.ClassJobId, AccretionJobIconSize, readyTooltip);
+        }
+    }
+
+    private static void DrawClassJobIcon(uint classJobId, float iconSize, string tooltip)
+    {
+        var iconId = GetClassJobIconId(classJobId);
+        if (iconId != 0)
+        {
+            try
+            {
+                var texture = Plugin.TextureProvider.GetFromGameIcon(new GameIconLookup(iconId));
+                var wrap = texture.GetWrapOrDefault();
+                if (wrap is not null)
+                {
+                    ImGui.Image(wrap.Handle, new Vector2(iconSize));
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.SetTooltip(tooltip);
+                    }
+
+                    return;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        DrawClassJobPlaceholder(iconSize, tooltip);
+    }
+
+    private static void DrawClassJobPlaceholder(float iconSize, string tooltip)
+    {
+        var size = new Vector2(iconSize);
+        var start = ImGui.GetCursorScreenPos();
+        ImGui.Dummy(size);
+
+        var drawList = ImGui.GetWindowDrawList();
+        drawList.AddRect(
+            start,
+            start + size,
+            ImGui.GetColorU32(PanelBorderColor),
+            4.0f);
+        var text = "?";
+        var textSize = ImGui.CalcTextSize(text);
+        drawList.AddText(
+            start + new Vector2(MathF.Max(0.0f, (size.X - textSize.X) * 0.5f), MathF.Max(0.0f, (size.Y - textSize.Y) * 0.5f)),
+            ImGui.GetColorU32(UnknownColor),
+            text);
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(tooltip);
+        }
+    }
+
+    private static uint GetClassJobIconId(uint classJobId)
+    {
+        return classJobId == 0 ? 0 : 62100u + classJobId;
+    }
+
     private void DrawPreviewView()
     {
         if (selectedPreviewMode is not (DmuHelperDisplayMode.P3BlackHole or DmuHelperDisplayMode.P4Debuffs))
@@ -215,7 +347,8 @@ public sealed class HelperWindow : Window, IDisposable
         if (selectedPreviewMode == DmuHelperDisplayMode.P3BlackHole)
         {
             DrawP3PreviewControls();
-            DrawP3Content(CreateP3PreviewAssignment());
+            var previewAssignment = CreateP3PreviewAssignment();
+            DrawP3Content(previewAssignment, CreateP3PreviewAssignments(previewAssignment));
             return;
         }
 
@@ -273,11 +406,51 @@ public sealed class HelperWindow : Window, IDisposable
             "You",
             0,
             role.IsDps,
+            role.ClassJobId,
             role.HadAccretion,
             role.LineGroup,
             lineStatusId,
             GetLineName(lineStatusId),
             30.0f);
+    }
+
+    private static IReadOnlyList<P3.LocalPlayerBlackHoleAssignment> CreateP3PreviewAssignments(
+        P3.LocalPlayerBlackHoleAssignment selectedAssignment)
+    {
+        if (selectedAssignment.HadAccretion)
+        {
+            return selectedAssignment.IsDps
+                ? [CreatePreviewAccretion("preview-healer", 1, false, 24, selectedAssignment.LineGroup), selectedAssignment]
+                : [selectedAssignment, CreatePreviewAccretion("preview-dps", 1, true, 41, selectedAssignment.LineGroup)];
+        }
+
+        return
+        [
+            selectedAssignment,
+            CreatePreviewAccretion("preview-healer", 1, false, 24, P3.LineGroup.First),
+            CreatePreviewAccretion("preview-dps", 2, true, 41, P3.LineGroup.Second),
+        ];
+    }
+
+    private static P3.LocalPlayerBlackHoleAssignment CreatePreviewAccretion(
+        string memberKey,
+        int partyIndex,
+        bool isDps,
+        uint classJobId,
+        P3.LineGroup lineGroup)
+    {
+        var lineStatusId = GetLineStatusId(lineGroup);
+        return new P3.LocalPlayerBlackHoleAssignment(
+            memberKey,
+            "Preview",
+            partyIndex,
+            isDps,
+            classJobId,
+            true,
+            lineGroup,
+            lineStatusId,
+            GetLineName(lineStatusId),
+            0.0f);
     }
 
     private void DrawHeader(string titleBase, int assignmentCount, bool isPreview)
@@ -715,5 +888,5 @@ public sealed class HelperWindow : Window, IDisposable
         };
     }
 
-    private sealed record P3PreviewRole(P3.LineGroup LineGroup, bool IsDps, bool HadAccretion, string Label);
+    private sealed record P3PreviewRole(P3.LineGroup LineGroup, bool IsDps, bool HadAccretion, uint ClassJobId, string Label);
 }

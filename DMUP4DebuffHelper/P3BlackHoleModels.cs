@@ -27,6 +27,7 @@ public sealed record PartyMemberSnapshot(
     string MemberName,
     int PartyIndex,
     bool IsDps,
+    uint ClassJobId,
     ulong ContentId,
     uint EntityId);
 
@@ -85,6 +86,7 @@ public sealed record LocalPlayerBlackHoleAssignment(
     string MemberName,
     int PartyIndex,
     bool IsDps,
+    uint ClassJobId,
     bool HadAccretion,
     LineGroup LineGroup,
     uint LineStatusId,

@@ -186,12 +186,14 @@ public sealed class P3BlackHoleTracker
             var memberKey = member.ContentId != 0
                 ? member.ContentId.ToString("X16")
                 : $"{memberName}:{partyIndex}";
-            var isDps = IsDpsJob(member.ClassJob.RowId);
+            var classJobId = member.ClassJob.RowId;
+            var isDps = IsDpsJob(classJobId);
             nextMembers.Add(new P3.PartyMemberSnapshot(
                 memberKey,
                 memberName,
                 partyIndex,
                 isDps,
+                classJobId,
                 member.ContentId,
                 member.EntityId));
             var isDead = member.GameObject?.IsDead == true ||
@@ -825,6 +827,7 @@ public sealed class P3BlackHoleTracker
                 member.MemberName,
                 member.PartyIndex,
                 member.IsDps,
+                member.ClassJobId,
                 accretionMemberKeys.Contains(member.MemberKey),
                 P3.LineGroup.None,
                 0,
@@ -837,6 +840,7 @@ public sealed class P3BlackHoleTracker
             member.MemberName,
             member.PartyIndex,
             member.IsDps,
+            member.ClassJobId,
             accretionMemberKeys.Contains(member.MemberKey),
             GetLineGroup(lineEntry.StatusId),
             lineEntry.StatusId,
