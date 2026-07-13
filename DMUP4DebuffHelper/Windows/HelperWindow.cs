@@ -143,6 +143,12 @@ public sealed class HelperWindow : Window, IDisposable
 
         if (!assignment.HasLine)
         {
+            if (assignments.Any(assignment => assignment.HadAccretion))
+            {
+                DrawP3AccretionBlock(assignments);
+                ImGui.Spacing();
+            }
+
             ImGui.TextUnformatted("Your Black Hole assignment");
             ImGui.TextDisabled("Waiting for your line debuff.");
             return;
@@ -231,8 +237,9 @@ public sealed class HelperWindow : Window, IDisposable
         ImGui.TextUnformatted("Accretions");
         ImGui.Separator();
         var accretions = assignments
-            .Where(assignment => assignment is { HasLine: true, HadAccretion: true })
+            .Where(assignment => assignment.HadAccretion)
             .OrderBy(assignment => assignment.IsDps)
+            .ThenBy(assignment => assignment.HasLine ? 0 : 1)
             .ThenBy(assignment => assignment.PartyIndex)
             .ToList();
         var healerAccretion = accretions.FirstOrDefault(assignment => !assignment.IsDps);
@@ -254,7 +261,10 @@ public sealed class HelperWindow : Window, IDisposable
         }
         else
         {
-            DrawClassJobIcon(assignment.ClassJobId, AccretionJobIconSize, readyTooltip);
+            var tooltip = assignment.HasLine
+                ? readyTooltip
+                : $"{readyTooltip} (line not captured)";
+            DrawClassJobIcon(assignment.ClassJobId, AccretionJobIconSize, tooltip);
         }
     }
 

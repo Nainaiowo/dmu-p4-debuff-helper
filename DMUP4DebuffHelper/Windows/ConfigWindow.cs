@@ -174,7 +174,7 @@ public sealed class ConfigWindow : Window, IDisposable
 
     private bool HasCurrentP3Summary()
     {
-        return plugin.P3BlackHole.CurrentAssignments.Any(assignment => assignment.HasLine);
+        return plugin.P3BlackHole.CurrentAssignments.Any(HasP3AssignmentData);
     }
 
     private void DrawCurrentP3Summary()
@@ -193,7 +193,7 @@ public sealed class ConfigWindow : Window, IDisposable
     {
         var snapshotsWithAssignments = snapshots
             .Select((snapshot, index) => (Snapshot: snapshot, PullNumber: index + 1))
-            .Where(entry => entry.Snapshot.Assignments.Any(assignment => assignment.HasLine))
+            .Where(entry => entry.Snapshot.Assignments.Any(HasP3AssignmentData))
             .ToList();
         if (snapshotsWithAssignments.Count == 0)
         {
@@ -226,7 +226,7 @@ public sealed class ConfigWindow : Window, IDisposable
     private static void DrawP3AssignmentSummary(IReadOnlyList<P3.LocalPlayerBlackHoleAssignment> assignments, string idSuffix)
     {
         var lineAssignments = assignments
-            .Where(assignment => assignment.HasLine)
+            .Where(HasP3AssignmentData)
             .OrderBy(GetP3AssignmentSortKey)
             .ThenBy(assignment => assignment.PartyIndex)
             .ToList();
@@ -253,12 +253,17 @@ public sealed class ConfigWindow : Window, IDisposable
             ImGui.TableNextColumn();
             ImGui.TextUnformatted(assignment.MemberName);
             ImGui.TableNextColumn();
-            ImGui.TextUnformatted(assignment.LineName);
+            ImGui.TextUnformatted(assignment.HasLine ? assignment.LineName : "Line not captured");
             ImGui.TableNextColumn();
-            ImGui.TextUnformatted(assignment.RoleName);
+            ImGui.TextUnformatted(assignment.HasLine ? assignment.RoleName : "Accretion");
         }
 
         ImGui.EndTable();
+    }
+
+    private static bool HasP3AssignmentData(P3.LocalPlayerBlackHoleAssignment assignment)
+    {
+        return assignment.HasLine || assignment.HadAccretion;
     }
 
     private static int GetP3AssignmentSortKey(P3.LocalPlayerBlackHoleAssignment assignment)
@@ -271,6 +276,7 @@ public sealed class ConfigWindow : Window, IDisposable
             (true, P3.LineGroup.First) => 3,
             (true, P3.LineGroup.Second) => 4,
             (true, P3.LineGroup.Third) => 5,
+            (true, P3.LineGroup.None) => 6,
             _ => 99,
         };
     }

@@ -45,6 +45,7 @@ public sealed class P3BlackHoleTracker
     private readonly List<P3.BlackHolePullSnapshot> pullSnapshots = [];
     private readonly HashSet<string> accretionHistory = new(StringComparer.Ordinal);
     private readonly Dictionary<string, P3.PartyStatusEntry> lineHistory = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, P3.PartyMemberSnapshot> memberHistory = new(StringComparer.Ordinal);
     private readonly Dictionary<string, P3.PartyDeathRecord> lastIncomingActionByMember = new(StringComparer.Ordinal);
     private readonly Dictionary<uint, string> actionNameCache = new();
     private readonly HashSet<string> capturedBlackHoleResolutionKeys = new(StringComparer.Ordinal);
@@ -90,7 +91,8 @@ public sealed class P3BlackHoleTracker
         {
             if (currentEntries.Count > 0 ||
                 MechanicState.IsActive ||
-                LocalAssignment?.HasLine == true)
+                LocalAssignment?.HasLine == true ||
+                currentAssignments.Any(assignment => assignment.HasLine || assignment.HadAccretion))
             {
                 return true;
             }
@@ -167,6 +169,7 @@ public sealed class P3BlackHoleTracker
         LocalAssignment = null;
         accretionHistory.Clear();
         lineHistory.Clear();
+        memberHistory.Clear();
         lastLiveSignalSeenAtUtc = null;
     }
 
@@ -179,19 +182,28 @@ public sealed class P3BlackHoleTracker
         foreach (var member in Plugin.PartyList)
         {
             var memberName = member.Name.TextValue;
-            var memberKey = member.ContentId != 0
-                ? member.ContentId.ToString("X16")
-                : $"{memberName}:{partyIndex}";
-            var classJobId = member.ClassJob.RowId;
+            var entityId = member.EntityId;
+            var memberKey = ResolveMemberKey(memberName, partyIndex, member.ContentId, entityId);
+            MigrateFallbackMemberHistory(memberName, partyIndex, memberKey);
+            memberHistory.TryGetValue(memberKey, out var historicalMember);
+            var contentId = member.ContentId != 0
+                ? member.ContentId
+                : historicalMember?.ContentId ?? 0;
+            var classJobId = member.ClassJob.RowId != 0
+                ? member.ClassJob.RowId
+                : historicalMember?.ClassJobId ?? 0;
             var isDps = IsDpsJob(classJobId);
-            nextMembers.Add(new P3.PartyMemberSnapshot(
+            var memberSnapshot = new P3.PartyMemberSnapshot(
                 memberKey,
                 memberName,
                 partyIndex,
                 isDps,
                 classJobId,
-                member.ContentId,
-                member.EntityId));
+                contentId,
+                entityId);
+            nextMembers.Add(memberSnapshot);
+            memberHistory[memberKey] = memberSnapshot;
+
             var isDead = member.GameObject?.IsDead == true ||
                 (member.MaxHP > 0 && member.CurrentHP == 0);
             nextDeathStates.Add((memberKey, memberName, partyIndex, isDead));
@@ -234,6 +246,8 @@ public sealed class P3BlackHoleTracker
             lineHistory[entry.MemberKey] = entry;
         }
 
+        AddHistoricalMembers(nextMembers);
+
         currentMembers.Clear();
         currentMembers.AddRange(nextMembers.OrderBy(member => member.PartyIndex));
 
@@ -250,6 +264,78 @@ public sealed class P3BlackHoleTracker
         LocalAssignment = BuildLocalAssignment();
         UpdateBlackHoleState(currentEntries);
         UpdatePartyDeathTimeline(nextDeathStates);
+    }
+
+    private string ResolveMemberKey(string memberName, int partyIndex, ulong contentId, uint entityId)
+    {
+        if (contentId != 0)
+        {
+            return contentId.ToString("X16");
+        }
+
+        if (entityId != 0)
+        {
+            var entityMatch = memberHistory.Values.FirstOrDefault(member =>
+                member.EntityId == entityId &&
+                member.ContentId != 0);
+            if (entityMatch is not null)
+            {
+                return entityMatch.MemberKey;
+            }
+        }
+
+        var nameMatch = memberHistory.Values.FirstOrDefault(member =>
+            member.PartyIndex == partyIndex &&
+            member.ContentId != 0 &&
+            string.Equals(member.MemberName, memberName, StringComparison.OrdinalIgnoreCase));
+        return nameMatch?.MemberKey ?? $"{memberName}:{partyIndex}";
+    }
+
+    private void MigrateFallbackMemberHistory(string memberName, int partyIndex, string memberKey)
+    {
+        var fallbackKey = $"{memberName}:{partyIndex}";
+        if (string.Equals(fallbackKey, memberKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (lineHistory.Remove(fallbackKey, out var lineEntry))
+        {
+            lineHistory[memberKey] = lineEntry with
+            {
+                Key = $"{memberKey}:{lineEntry.StatusId}",
+                MemberKey = memberKey,
+            };
+        }
+
+        if (accretionHistory.Remove(fallbackKey))
+        {
+            accretionHistory.Add(memberKey);
+        }
+
+        memberHistory.Remove(fallbackKey);
+    }
+
+    private void AddHistoricalMembers(List<P3.PartyMemberSnapshot> members)
+    {
+        var activeMemberKeys = members
+            .Select(member => member.MemberKey)
+            .ToHashSet(StringComparer.Ordinal);
+        var relevantHistoricalKeys = lineHistory.Keys
+            .Concat(accretionHistory)
+            .Distinct(StringComparer.Ordinal);
+
+        foreach (var memberKey in relevantHistoricalKeys)
+        {
+            if (activeMemberKeys.Contains(memberKey) ||
+                !memberHistory.TryGetValue(memberKey, out var historicalMember))
+            {
+                continue;
+            }
+
+            members.Add(historicalMember);
+            activeMemberKeys.Add(memberKey);
+        }
     }
 
     private void UpdateBlackHoleState(IReadOnlyList<P3.PartyStatusEntry> entries)
