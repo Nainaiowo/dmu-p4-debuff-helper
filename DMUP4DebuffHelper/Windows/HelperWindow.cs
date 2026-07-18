@@ -594,12 +594,10 @@ public sealed class HelperWindow : Window, IDisposable
     {
         var previews = new (uint StatusId, RealityState Reality, ushort TellParam, float Time, string MemberName, int PartyIndex, WoundColor WoundColor)[]
         {
-            (5545, RealityState.Real, 1120, 6.8f, "Preview Player", 0, WoundColor.None),
-            (5544, RealityState.Fake, 1119, 7.4f, "Preview Player", 0, WoundColor.None),
-            (4888, RealityState.Unknown, 0, 8.8f, "Preview Player", 0, WoundColor.Black),
-            (4887, RealityState.Unknown, 0, 10.4f, "Preview Partner", 1, WoundColor.White),
-            (454, RealityState.Unknown, 0, 12.0f, "Preview Player", 0, WoundColor.White),
-            (5464, RealityState.Unknown, 0, 14.5f, "Preview Player", 0, WoundColor.Black),
+            (4887, RealityState.Unknown, 0, 6.8f, "Preview Player", 0, WoundColor.White),
+            (454, RealityState.Unknown, 0, 7.4f, "Preview Player", 0, WoundColor.White),
+            (5545, RealityState.Real, 1120, 10.4f, "Preview Player", 0, WoundColor.None),
+            (5544, RealityState.Fake, 1119, 12.0f, "Preview Player", 0, WoundColor.None),
             (5548, RealityState.Real, 1122, 18.0f, "Preview Player", 0, WoundColor.None),
             (5547, RealityState.Fake, 1121, 23.2f, "Preview Player", 0, WoundColor.None),
         };
