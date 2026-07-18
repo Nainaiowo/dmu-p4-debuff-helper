@@ -32,6 +32,7 @@ public sealed class Plugin : IDalamudPlugin
     private const string LegacyP3HelperCommandName = "/dmup3helper";
     private const uint DmuTerritoryId = 1363;
     private const uint BossTellStatusId = 2056;
+    private const uint CursedShriekStatusId = 5543;
     private const int QueuedChatDelayMs = 200;
     private const float StatusTimerAnchorRefreshThreshold = 0.05f;
     private static readonly TimeSpan BossTellFreshness = TimeSpan.FromSeconds(20);
@@ -81,6 +82,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly List<PartyMemberSnapshot> currentMembers = [];
     private readonly List<P4DebuffAssignment> currentAssignments = [];
     private readonly List<P4DebuffAssignment> localAssignments = [];
+    private readonly List<P4DebuffAssignment> currentGazeAssignments = [];
     private readonly List<BossTellSnapshot> currentBossTells = [];
     private readonly List<BossTellSnapshot> currentPullBossTells = [];
     private readonly List<P4DebuffRecord> currentPullDebuffRecords = [];
@@ -108,6 +110,8 @@ public sealed class Plugin : IDalamudPlugin
     public IReadOnlyList<P4DebuffAssignment> CurrentAssignments => currentAssignments;
 
     public IReadOnlyList<P4DebuffAssignment> LocalAssignments => localAssignments;
+
+    public IReadOnlyList<P4DebuffAssignment> CurrentGazeAssignments => currentGazeAssignments;
 
     public IReadOnlyList<BossTellSnapshot> CurrentBossTells => currentBossTells;
 
@@ -369,6 +373,7 @@ public sealed class Plugin : IDalamudPlugin
             currentMembers.Clear();
             currentAssignments.Clear();
             localAssignments.Clear();
+            currentGazeAssignments.Clear();
             currentBossTells.Clear();
             latestBossTells.Clear();
             capturedDebuffStates.Clear();
@@ -402,11 +407,6 @@ public sealed class Plugin : IDalamudPlugin
             var isLocalMember =
                 (localContentId != 0 && member.ContentId == localContentId)
                 || (localEntityId != 0 && member.EntityId == localEntityId);
-            if (!isLocalMember)
-            {
-                partyIndex++;
-                continue;
-            }
 
             foreach (var status in member.Statuses)
             {
@@ -421,6 +421,11 @@ public sealed class Plugin : IDalamudPlugin
                     continue;
                 }
 
+                if (!isLocalMember && status.StatusId != CursedShriekStatusId)
+                {
+                    continue;
+                }
+
                 var entryKey = $"{memberKey}:{status.StatusId}";
                 nextEntries.Add(new PartyStatusEntry(
                     entryKey,
@@ -428,11 +433,11 @@ public sealed class Plugin : IDalamudPlugin
                     memberName,
                     partyIndex,
                     status.StatusId,
-                    isWatched ? watchedStatus!.Name : GetStatusName(status.StatusId),
+                    watchedStatus!.Name,
                     GetStatusIconId(status.StatusId),
                     GetSmoothedStatusRemainingTime(entryKey, status.RemainingTime, now),
-                    isWatched,
-                    isWatched ? watchedStatus!.SortOrder : 10_000 + partyIndex,
+                    true,
+                    watchedStatus!.SortOrder,
                     now));
             }
 
@@ -452,6 +457,7 @@ public sealed class Plugin : IDalamudPlugin
 
         RefreshBossTellSnapshots();
         RefreshAssignments();
+        RefreshPartyGazeAssignments();
         RefreshLocalAssignments();
         UpdatePullTracking();
         var p4LiveSignal = HasP4LiveSignal();
@@ -473,6 +479,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         return currentAssignments.Count > 0 ||
             localAssignments.Count > 0 ||
+            currentGazeAssignments.Count > 0 ||
             currentBossTells.Count > 0;
     }
 
@@ -559,6 +566,24 @@ public sealed class Plugin : IDalamudPlugin
                 continue;
             }
 
+            var woundColor = rule.Group == P4MechanicGroup.Flood
+                ? GetWoundColor(entry.MemberKey)
+                : WoundColor.None;
+            var floodSide = P4Flood.ResolveSide(rule.Id, woundColor);
+
+            if (rule.Group == P4MechanicGroup.Flood)
+            {
+                currentAssignments.Add(new P4DebuffAssignment(
+                    entry,
+                    rule,
+                    RealityState.Unknown,
+                    null,
+                    GetInstruction(rule, RealityState.Unknown, woundColor, floodSide),
+                    woundColor,
+                    floodSide));
+                continue;
+            }
+
             var capturedState = GetOrUpdateCapturedDebuffState(entry, rule);
 
             currentAssignments.Add(new P4DebuffAssignment(
@@ -566,7 +591,9 @@ public sealed class Plugin : IDalamudPlugin
                 rule,
                 capturedState.Reality,
                 capturedState.TellParam,
-                GetInstruction(entry, rule, capturedState.Reality)));
+                GetInstruction(rule, capturedState.Reality, woundColor, floodSide),
+                woundColor,
+                floodSide));
         }
 
         UpdateCurrentPullDebuffRecords();
@@ -583,6 +610,26 @@ public sealed class Plugin : IDalamudPlugin
 
         localAssignments.AddRange(currentAssignments
             .Where(assignment => assignment.Entry.MemberKey == localMember.MemberKey));
+    }
+
+    private void RefreshPartyGazeAssignments()
+    {
+        currentGazeAssignments.Clear();
+        if (!WatchedStatuses.TryGetValue(CursedShriekStatusId, out var rule))
+        {
+            return;
+        }
+
+        foreach (var entry in currentEntries.Where(entry => entry.StatusId == CursedShriekStatusId))
+        {
+            var capturedState = GetOrUpdateCapturedDebuffState(entry, rule);
+            currentGazeAssignments.Add(new P4DebuffAssignment(
+                entry,
+                rule,
+                capturedState.Reality,
+                capturedState.TellParam,
+                GetInstruction(rule, capturedState.Reality, WoundColor.None, FloodSide.None)));
+        }
     }
 
     private PartyMemberSnapshot? GetLocalPartyMember()
@@ -653,7 +700,9 @@ public sealed class Plugin : IDalamudPlugin
             assignment.Reality,
             assignment.TellParam,
             assignment.Entry.RemainingTime,
-            assignment.Instruction);
+            assignment.Instruction,
+            assignment.WoundColor,
+            assignment.FloodSide);
     }
 
     private void PruneCapturedDebuffStates()
@@ -730,9 +779,7 @@ public sealed class Plugin : IDalamudPlugin
             return P4MechanicGroup.Chaos;
         }
 
-        return HasActiveFloodDebuffs()
-            ? P4MechanicGroup.Flood
-            : P4MechanicGroup.GrandCross;
+        return P4MechanicGroup.GrandCross;
     }
 
     private bool TryGetRelevantTell(WatchedStatus rule, out BossTellSnapshot? tell)
@@ -753,25 +800,18 @@ public sealed class Plugin : IDalamudPlugin
         return true;
     }
 
-    private bool HasActiveFloodDebuffs()
-    {
-        return currentEntries.Any(entry => entry.IsWatched
-            && WatchedStatuses.TryGetValue(entry.StatusId, out var rule)
-            && rule.Group == P4MechanicGroup.Flood);
-    }
-
     private static string GetTellKey(P4Boss boss, P4MechanicGroup group)
     {
         return $"{boss}:{group}";
     }
 
-    private string GetInstruction(PartyStatusEntry entry, WatchedStatus rule, RealityState reality)
+    private static string GetInstruction(WatchedStatus rule, RealityState reality, WoundColor woundColor, FloodSide floodSide)
     {
         return rule.Group switch
         {
             P4MechanicGroup.GrandCross => GetGrandCrossInstruction(rule.Id, reality),
             P4MechanicGroup.Chaos => GetChaosInstruction(rule.Id, reality),
-            P4MechanicGroup.Flood => GetFloodInstruction(entry, rule.Id, reality),
+            P4MechanicGroup.Flood => P4Flood.FormatInstruction(rule.Id, woundColor, floodSide),
             _ => "Tracked status.",
         };
     }
@@ -825,36 +865,6 @@ public sealed class Plugin : IDalamudPlugin
                 _ => "Entropy: real point-blank, fake donut.",
             },
             _ => "Tracked Chaos debuff.",
-        };
-    }
-
-    private string GetFloodInstruction(PartyStatusEntry entry, uint statusId, RealityState reality)
-    {
-        var woundColor = GetWoundColor(entry.MemberKey);
-        var woundText = woundColor switch
-        {
-            WoundColor.Black => "Black Wound",
-            WoundColor.White => "White Wound",
-            _ => "your Wound",
-        };
-
-        return statusId switch
-        {
-            454 => reality switch
-            {
-                RealityState.Real => $"Allagan Field: stand opposite {woundText}.",
-                RealityState.Fake => $"Allagan Field: stand same as {woundText}.",
-                _ => "Allagan Field: real opposite Wound, fake same Wound.",
-            },
-            5464 => reality switch
-            {
-                RealityState.Real => $"Beyond Death: stand same as {woundText}.",
-                RealityState.Fake => $"Beyond Death: stand opposite {woundText}.",
-                _ => "Beyond Death: real same Wound, fake opposite Wound.",
-            },
-            4888 => "Black Wound: use with Allagan Field or Beyond Death.",
-            4887 => "White Wound: use with Allagan Field or Beyond Death.",
-            _ => "Tracked Flood debuff.",
         };
     }
 
@@ -942,6 +952,7 @@ public sealed class Plugin : IDalamudPlugin
         currentMembers.Clear();
         currentAssignments.Clear();
         localAssignments.Clear();
+        currentGazeAssignments.Clear();
         currentBossTells.Clear();
         latestBossTells.Clear();
         capturedDebuffStates.Clear();
@@ -983,6 +994,7 @@ public sealed class Plugin : IDalamudPlugin
         return currentPullDebuffRecords.Count > 0 ||
             currentPullBossTells.Count > 0 ||
             currentAssignments.Count > 0 ||
+            currentGazeAssignments.Count > 0 ||
             currentBossTells.Count > 0;
     }
 

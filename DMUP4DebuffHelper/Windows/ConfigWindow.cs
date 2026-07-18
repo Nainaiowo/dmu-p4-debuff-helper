@@ -355,7 +355,7 @@ public sealed class ConfigWindow : Window, IDisposable
             return;
         }
 
-        var unknownCount = records.Count(record => record.Reality == RealityState.Unknown);
+        var unknownCount = records.Count(record => record.Group != P4MechanicGroup.Flood && record.Reality == RealityState.Unknown);
         if (unknownCount > 0)
         {
             ImGui.TextColored(ErrorTextColor, $"{unknownCount} debuff record(s) were Unknown because no matching boss tell was captured.");
@@ -392,8 +392,8 @@ public sealed class ConfigWindow : Window, IDisposable
                 ImGui.TableNextColumn();
                 ImGui.TextUnformatted(record.StatusName);
                 ImGui.TableNextColumn();
-                ImGui.PushStyleColor(ImGuiCol.Text, GetRealityColor(record.Reality));
-                ImGui.TextUnformatted(FormatReality(record.Reality));
+                ImGui.PushStyleColor(ImGuiCol.Text, GetStateColor(record));
+                ImGui.TextUnformatted(FormatState(record));
                 ImGui.PopStyleColor();
                 ImGui.TableNextColumn();
                 ImGui.TextUnformatted(record.TellParam?.ToString() ?? "--");
@@ -416,6 +416,47 @@ public sealed class ConfigWindow : Window, IDisposable
             RealityState.Unknown => ErrorTextColor,
             _ => DisabledTextColor,
         };
+    }
+
+    private static Vector4 GetStateColor(P4DebuffRecord record)
+    {
+        if (record.Group == P4MechanicGroup.Flood)
+        {
+            return record.FloodSide switch
+            {
+                FloodSide.Blue => RealTextColor,
+                FloodSide.Purple => FakeTextColor,
+                _ => DisabledTextColor,
+            };
+        }
+
+        return GetRealityColor(record.Reality);
+    }
+
+    private static string FormatState(P4DebuffRecord record)
+    {
+        if (record.Group == P4MechanicGroup.Flood)
+        {
+            if (record.FloodSide != FloodSide.None)
+            {
+                return $"Go {P4Flood.FormatSide(record.FloodSide)}";
+            }
+
+            var woundSide = P4Flood.GetWoundSide(record.WoundColor);
+            if (woundSide != FloodSide.None)
+            {
+                return $"{P4Flood.FormatSide(woundSide)} Wound";
+            }
+
+            return record.StatusId switch
+            {
+                454 => "Opposite Wound",
+                5464 => "Same Wound",
+                _ => "--",
+            };
+        }
+
+        return FormatReality(record.Reality);
     }
 
     private static string FormatReality(RealityState reality)
