@@ -78,6 +78,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ConfigWindow configWindow;
     private readonly HelperWindow helperWindow;
     private readonly P3BlackHoleTracker p3BlackHoleTracker;
+    private readonly P3LimitCutTracker p3LimitCutTracker;
     private readonly List<PartyStatusEntry> currentEntries = [];
     private readonly List<PartyMemberSnapshot> currentMembers = [];
     private readonly List<P4DebuffAssignment> currentAssignments = [];
@@ -123,6 +124,8 @@ public sealed class Plugin : IDalamudPlugin
 
     public P3BlackHoleTracker P3BlackHole => p3BlackHoleTracker;
 
+    public P3LimitCutTracker P3LimitCut => p3LimitCutTracker;
+
     public DmuHelperDisplayMode DisplayMode { get; private set; } = DmuHelperDisplayMode.Empty;
 
     public float CurrentPullElapsedSeconds => pullStartedAtUtc is not null
@@ -137,6 +140,7 @@ public sealed class Plugin : IDalamudPlugin
         Configuration.SelectedBlackHoleStrategy = DMUP3BlackholeHelper.BlackHoleStrategy.Normalize(Configuration.SelectedBlackHoleStrategy);
 
         p3BlackHoleTracker = new P3BlackHoleTracker(this);
+        p3LimitCutTracker = new P3LimitCutTracker();
         configWindow = new ConfigWindow(this);
         helperWindow = new HelperWindow(this)
         {
@@ -354,9 +358,14 @@ public sealed class Plugin : IDalamudPlugin
         ActionEffectHandler.TargetEffects* effects,
         GameObjectId* targetEntityIds)
     {
-        if (!p4SeenThisPull)
+        if (!p4SeenThisPull && ClientState.TerritoryType == DmuTerritoryId)
         {
+            p3LimitCutTracker.ProcessActionEffect(casterEntityId, header);
             p3BlackHoleTracker.ProcessActionEffect(casterEntityId, header, targetEntityIds);
+            if (p3BlackHoleTracker.HasLiveSignal)
+            {
+                p3LimitCutTracker.Reset();
+            }
         }
 
         actionEffectHook?.Original(casterEntityId, casterPtr, targetPos, header, effects, targetEntityIds);
@@ -368,6 +377,7 @@ public sealed class Plugin : IDalamudPlugin
         if (!IsInDmu)
         {
             p3BlackHoleTracker.Refresh(isInDmu: false, suppressLiveForP4: false);
+            p3LimitCutTracker.Reset();
             CaptureCurrentPullSnapshot("Left DMU");
             currentEntries.Clear();
             currentMembers.Clear();
@@ -465,11 +475,16 @@ public sealed class Plugin : IDalamudPlugin
         {
             p4SeenThisPull = true;
             p3BlackHoleTracker.ClearLiveDisplay("P4 detected");
+            p3LimitCutTracker.Reset();
         }
 
         if (!p4SeenThisPull)
         {
             p3BlackHoleTracker.Refresh(isInDmu: true, suppressLiveForP4: false);
+            if (p3BlackHoleTracker.HasLiveSignal)
+            {
+                p3LimitCutTracker.Reset();
+            }
         }
 
         UpdateDisplayMode();
@@ -487,7 +502,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         DisplayMode = HasP4LiveSignal()
             ? DmuHelperDisplayMode.P4Debuffs
-            : !p4SeenThisPull && p3BlackHoleTracker.HasLiveSignal
+            : !p4SeenThisPull && (p3BlackHoleTracker.HasLiveSignal || p3LimitCutTracker.HasLiveSignal)
                 ? DmuHelperDisplayMode.P3BlackHole
                 : Configuration.PreviewWhenInactive
                     ? DmuHelperDisplayMode.Preview
@@ -947,6 +962,7 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         p3BlackHoleTracker.OnDutyReset();
+        p3LimitCutTracker.Reset();
         CaptureCurrentPullSnapshot("Wipe/reset detected");
         currentEntries.Clear();
         currentMembers.Clear();

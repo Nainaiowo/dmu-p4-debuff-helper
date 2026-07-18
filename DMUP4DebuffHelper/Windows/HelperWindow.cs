@@ -73,7 +73,11 @@ public sealed class HelperWindow : Window, IDisposable
                     isPreview: false);
                 break;
             case DmuHelperDisplayMode.P3BlackHole:
-                DrawP3View(plugin.P3BlackHole.LocalAssignment, plugin.P3BlackHole.CurrentAssignments, isPreview: false);
+                DrawP3View(
+                    plugin.P3BlackHole.LocalAssignment,
+                    plugin.P3BlackHole.CurrentAssignments,
+                    plugin.P3BlackHole.HasLiveSignal ? P3LimitCutState.Inactive : plugin.P3LimitCut.CurrentState,
+                    isPreview: false);
                 break;
             case DmuHelperDisplayMode.Preview:
                 DrawPreviewView();
@@ -129,32 +133,53 @@ public sealed class HelperWindow : Window, IDisposable
     private void DrawP3View(
         P3.LocalPlayerBlackHoleAssignment? assignment,
         IReadOnlyList<P3.LocalPlayerBlackHoleAssignment> assignments,
+        P3LimitCutState limitCutState,
         bool isPreview)
     {
         var instructionCount = P3.BlackHoleStrategy.GetInstructionsFor(assignment, plugin.Configuration.SelectedBlackHoleStrategy).Count;
-        DrawHeader(isPreview ? "P3 Black Hole Preview" : "P3 Black Hole", instructionCount, isPreview);
+        var titleBase = limitCutState.IsActive && (assignment is null || !assignment.HasLine)
+            ? "P3 Limit Cut"
+            : "P3 Black Hole";
+        var headerCount = titleBase == "P3 Limit Cut" ? 0 : instructionCount;
+        DrawHeader(isPreview ? "P3 Black Hole Preview" : titleBase, headerCount, isPreview);
         if (plugin.Configuration.HelperCollapsed)
         {
             return;
         }
 
         ImGui.Spacing();
-        DrawP3Content(assignment, assignments);
+        DrawP3Content(assignment, assignments, limitCutState);
     }
 
     private void DrawP3Content(
         P3.LocalPlayerBlackHoleAssignment? assignment,
-        IReadOnlyList<P3.LocalPlayerBlackHoleAssignment> assignments)
+        IReadOnlyList<P3.LocalPlayerBlackHoleAssignment> assignments,
+        P3LimitCutState limitCutState)
     {
+        if (limitCutState.IsActive)
+        {
+            DrawP3LimitCutBlock(limitCutState);
+            ImGui.Spacing();
+        }
+
         if (assignment is null)
         {
-            ImGui.TextUnformatted("Your Black Hole assignment");
-            ImGui.TextDisabled("Local player not found.");
+            if (!limitCutState.IsActive)
+            {
+                ImGui.TextUnformatted("Your Black Hole assignment");
+                ImGui.TextDisabled("Local player not found.");
+            }
+
             return;
         }
 
         if (!assignment.HasLine)
         {
+            if (limitCutState.IsActive)
+            {
+                return;
+            }
+
             if (assignments.Any(assignment => assignment.HadAccretion))
             {
                 DrawP3AccretionBlock(assignments);
@@ -229,6 +254,38 @@ public sealed class HelperWindow : Window, IDisposable
         DrawP3LocalAssignmentBlock(assignment);
         ImGui.Spacing();
         DrawP3AccretionBlock(overviewAssignments);
+    }
+
+    private static void DrawP3LimitCutBlock(P3LimitCutState state)
+    {
+        ImGui.TextUnformatted("Limit Cut orientation");
+        var panelStart = ImGui.GetCursorScreenPos();
+        var availableWidth = MathF.Max(180.0f, ImGui.GetContentRegionAvail().X);
+        var style = ImGui.GetStyle();
+        var lineHeight = ImGui.GetTextLineHeight();
+        var panelHeight = HelperPadding * 2.0f + lineHeight * 2.0f + style.ItemSpacing.Y;
+
+        ImGui.GetWindowDrawList().AddRectFilled(
+            panelStart,
+            panelStart + new Vector2(availableWidth, panelHeight),
+            ImGui.GetColorU32(PanelFillColor),
+            6.0f);
+        ImGui.GetWindowDrawList().AddRect(
+            panelStart,
+            panelStart + new Vector2(availableWidth, panelHeight),
+            ImGui.GetColorU32(PanelBorderColor),
+            6.0f);
+
+        ImGui.SetCursorScreenPos(panelStart + new Vector2(HelperPadding, HelperPadding));
+        ImGui.TextDisabled("New north");
+        ImGui.SameLine();
+        ImGui.TextColored(GoldColor, FormatLimitCutNorth(state));
+
+        ImGui.TextDisabled("Rotation");
+        ImGui.SameLine();
+        ImGui.TextColored(GetLimitCutRotationColor(state.Rotation), FormatLimitCutRotation(state.Rotation));
+
+        ImGui.SetCursorScreenPos(panelStart + new Vector2(0.0f, panelHeight + style.ItemSpacing.Y));
     }
 
     private void DrawP3LocalAssignmentBlock(P3.LocalPlayerBlackHoleAssignment assignment)
@@ -347,7 +404,7 @@ public sealed class HelperWindow : Window, IDisposable
 
         if (selectedPreviewMode == DmuHelperDisplayMode.P3BlackHole)
         {
-            DrawHeader("P3 Black Hole Preview", P3.BlackHoleStrategy.GetInstructionsFor(CreateP3PreviewAssignment(), plugin.Configuration.SelectedBlackHoleStrategy).Count, isPreview: true);
+            DrawHeader("P3 Preview", P3.BlackHoleStrategy.GetInstructionsFor(CreateP3PreviewAssignment(), plugin.Configuration.SelectedBlackHoleStrategy).Count, isPreview: true);
         }
         else
         {
@@ -369,7 +426,7 @@ public sealed class HelperWindow : Window, IDisposable
         {
             DrawP3PreviewControls();
             var previewAssignment = CreateP3PreviewAssignment();
-            DrawP3Content(previewAssignment, CreateP3PreviewAssignments(previewAssignment));
+            DrawP3Content(previewAssignment, CreateP3PreviewAssignments(previewAssignment), CreateP3PreviewLimitCutState());
             return;
         }
 
@@ -434,6 +491,16 @@ public sealed class HelperWindow : Window, IDisposable
             lineStatusId,
             GetLineName(lineStatusId),
             30.0f);
+    }
+
+    private static P3LimitCutState CreateP3PreviewLimitCutState()
+    {
+        return new P3LimitCutState(
+            true,
+            "SW",
+            "4",
+            P3LimitCutRotation.Clockwise,
+            2);
     }
 
     private static IReadOnlyList<P3.LocalPlayerBlackHoleAssignment> CreateP3PreviewAssignments(
@@ -1145,6 +1212,29 @@ public sealed class HelperWindow : Window, IDisposable
     private static string FormatRemainingTime(float remainingTime)
     {
         return remainingTime > 0.0f ? $"{remainingTime:0.0}s" : "-";
+    }
+
+    private static string FormatLimitCutRotation(P3LimitCutRotation rotation)
+    {
+        return rotation switch
+        {
+            P3LimitCutRotation.Clockwise => "CW",
+            P3LimitCutRotation.CounterClockwise => "CCW",
+            _ => "Waiting",
+        };
+    }
+
+    private static string FormatLimitCutNorth(P3LimitCutState state)
+    {
+        var direction = string.IsNullOrWhiteSpace(state.NewNorth) ? "Unknown" : state.NewNorth;
+        return string.IsNullOrWhiteSpace(state.NewNorthMarker)
+            ? direction
+            : $"{state.NewNorthMarker} ({direction})";
+    }
+
+    private static Vector4 GetLimitCutRotationColor(P3LimitCutRotation rotation)
+    {
+        return rotation == P3LimitCutRotation.Unknown ? UnknownColor : RealColor;
     }
 
     private static Vector4 GetRealityColor(RealityState reality)
