@@ -70,6 +70,36 @@ internal static class P4Flood
         };
     }
 
+    public static WoundColor GetOppositeWound(WoundColor woundColor)
+    {
+        return woundColor switch
+        {
+            WoundColor.Black => WoundColor.White,
+            WoundColor.White => WoundColor.Black,
+            _ => WoundColor.None,
+        };
+    }
+
+    public static WoundColor GetWoundColorForSide(FloodSide side)
+    {
+        return side switch
+        {
+            FloodSide.Blue => WoundColor.Black,
+            FloodSide.Purple => WoundColor.White,
+            _ => WoundColor.None,
+        };
+    }
+
+    public static WoundColor GetStatusWoundColor(uint statusId)
+    {
+        return statusId switch
+        {
+            4888 => WoundColor.Black,
+            4887 => WoundColor.White,
+            _ => WoundColor.None,
+        };
+    }
+
     public static FloodSide ResolveSide(uint statusId, WoundColor woundColor)
     {
         var woundSide = GetWoundSide(woundColor);
@@ -96,6 +126,16 @@ internal static class P4Flood
         };
     }
 
+    public static WoundColor ResolveDestinationWound(uint statusId, WoundColor woundColor)
+    {
+        return statusId switch
+        {
+            454 => GetOppositeWound(woundColor),
+            5464 => woundColor,
+            _ => WoundColor.None,
+        };
+    }
+
     public static string FormatSide(FloodSide side)
     {
         return side switch
@@ -106,32 +146,52 @@ internal static class P4Flood
         };
     }
 
+    public static string FormatWound(WoundColor woundColor)
+    {
+        return woundColor switch
+        {
+            WoundColor.Black => "Black",
+            WoundColor.White => "White",
+            _ => "Unknown",
+        };
+    }
+
+    public static string FormatWoundDebuff(WoundColor woundColor)
+    {
+        return woundColor == WoundColor.None
+            ? "Wound"
+            : $"{FormatWound(woundColor)} Wound";
+    }
+
     public static string FormatInstruction(uint statusId, WoundColor woundColor, FloodSide floodSide)
     {
-        var woundText = woundColor switch
-        {
-            WoundColor.Black => "Blue Wound",
-            WoundColor.White => "Purple Wound",
-            _ => "your Wound",
-        };
+        var woundText = woundColor == WoundColor.None
+            ? "your Wound"
+            : FormatWoundDebuff(woundColor);
         var relation = UsesSameWound(statusId) switch
         {
             true => "same as",
             false => "opposite",
             _ => null,
         };
-        var sideText = floodSide != FloodSide.None
-            ? FormatSide(floodSide).ToLowerInvariant()
+        var destinationWound = ResolveDestinationWound(statusId, woundColor);
+        if (destinationWound == WoundColor.None)
+        {
+            destinationWound = GetWoundColorForSide(floodSide);
+        }
+
+        var destinationText = destinationWound != WoundColor.None
+            ? FormatWound(destinationWound).ToLowerInvariant()
             : null;
 
         return statusId switch
         {
-            454 when sideText is not null && relation is not null => $"Allagan Field: go {sideText} ({relation} {woundText}).",
+            454 when destinationText is not null && relation is not null => $"Allagan Field: go {destinationText} ({relation} {woundText}).",
             454 => "Allagan Field: go opposite your Wound.",
-            5464 when sideText is not null && relation is not null => $"Beyond Death: go {sideText} ({relation} {woundText}).",
+            5464 when destinationText is not null && relation is not null => $"Beyond Death: go {destinationText} ({relation} {woundText}).",
             5464 => "Beyond Death: go same as your Wound.",
-            4888 => "Black Wound: blue side.",
-            4887 => "White Wound: purple side.",
+            4888 => "Black Wound.",
+            4887 => "White Wound.",
             _ => "Tracked Flood debuff.",
         };
     }

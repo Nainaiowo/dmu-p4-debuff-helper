@@ -422,7 +422,11 @@ public sealed class ConfigWindow : Window, IDisposable
     {
         if (record.Group == P4MechanicGroup.Flood)
         {
-            return record.FloodSide switch
+            var floodSide = record.FloodSide != FloodSide.None
+                ? record.FloodSide
+                : P4Flood.GetWoundSide(record.WoundColor);
+
+            return floodSide switch
             {
                 FloodSide.Blue => RealTextColor,
                 FloodSide.Purple => FakeTextColor,
@@ -437,15 +441,21 @@ public sealed class ConfigWindow : Window, IDisposable
     {
         if (record.Group == P4MechanicGroup.Flood)
         {
-            if (record.FloodSide != FloodSide.None)
+            var destinationWound = P4Flood.ResolveDestinationWound(record.StatusId, record.WoundColor);
+            if (destinationWound == WoundColor.None)
             {
-                return $"Go {P4Flood.FormatSide(record.FloodSide)}";
+                destinationWound = P4Flood.GetWoundColorForSide(record.FloodSide);
             }
 
-            var woundSide = P4Flood.GetWoundSide(record.WoundColor);
-            if (woundSide != FloodSide.None)
+            if (destinationWound != WoundColor.None)
             {
-                return $"{P4Flood.FormatSide(woundSide)} Wound";
+                return $"Go {P4Flood.FormatWound(destinationWound)}";
+            }
+
+            var statusWound = P4Flood.GetStatusWoundColor(record.StatusId);
+            if (statusWound != WoundColor.None)
+            {
+                return P4Flood.FormatWoundDebuff(statusWound);
             }
 
             return record.StatusId switch

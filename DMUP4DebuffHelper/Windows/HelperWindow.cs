@@ -1091,16 +1091,21 @@ public sealed class HelperWindow : Window, IDisposable
 
     private static string GetRealityLine(P4DebuffAssignment assignment)
     {
-        if (assignment.FloodSide != FloodSide.None)
+        var destinationWound = P4Flood.ResolveDestinationWound(assignment.Rule.Id, assignment.WoundColor);
+        if (destinationWound == WoundColor.None)
         {
-            return $"Go {P4Flood.FormatSide(assignment.FloodSide)}";
+            destinationWound = P4Flood.GetWoundColorForSide(assignment.FloodSide);
         }
 
-        if (assignment.Rule.Id is 4888 or 4887 &&
-            P4Flood.GetWoundSide(assignment.WoundColor) is { } woundSide &&
-            woundSide != FloodSide.None)
+        if (destinationWound != WoundColor.None)
         {
-            return $"{P4Flood.FormatSide(woundSide)} Wound";
+            return $"Go {P4Flood.FormatWound(destinationWound)}";
+        }
+
+        var statusWound = P4Flood.GetStatusWoundColor(assignment.Rule.Id);
+        if (statusWound != WoundColor.None)
+        {
+            return P4Flood.FormatWoundDebuff(statusWound);
         }
 
         if (assignment.Rule.Group == P4MechanicGroup.Flood)
@@ -1109,8 +1114,8 @@ public sealed class HelperWindow : Window, IDisposable
             {
                 454 => "Opposite Wound",
                 5464 => "Same Wound",
-                4888 => "Blue Wound",
-                4887 => "Purple Wound",
+                4888 => "Black Wound",
+                4887 => "White Wound",
                 _ => "Flood",
             };
         }
