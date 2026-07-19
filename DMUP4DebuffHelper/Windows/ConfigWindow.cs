@@ -424,7 +424,11 @@ public sealed class ConfigWindow : Window, IDisposable
         {
             var floodSide = record.FloodSide != FloodSide.None
                 ? record.FloodSide
-                : P4Flood.GetWoundSide(record.WoundColor);
+                : P4Flood.GetWoundSide(P4Flood.GetStatusWoundColor(record.StatusId));
+            if (floodSide == FloodSide.None)
+            {
+                floodSide = P4Flood.GetWoundSide(record.WoundColor);
+            }
 
             return floodSide switch
             {
@@ -441,7 +445,7 @@ public sealed class ConfigWindow : Window, IDisposable
     {
         if (record.Group == P4MechanicGroup.Flood)
         {
-            var destinationWound = P4Flood.ResolveDestinationWound(record.StatusId, record.WoundColor);
+            var destinationWound = P4Flood.ResolveDestinationWound(record.StatusId, record.WoundColor, record.Reality);
             if (destinationWound == WoundColor.None)
             {
                 destinationWound = P4Flood.GetWoundColorForSide(record.FloodSide);
@@ -460,8 +464,9 @@ public sealed class ConfigWindow : Window, IDisposable
 
             return record.StatusId switch
             {
-                454 => "Opposite Wound",
-                5464 => "Same Wound",
+                P4Flood.AllaganFieldStatusId => "Allagan Field",
+                P4Flood.BeyondDeath1StatusId => "Opposite Wound",
+                P4Flood.BeyondDeath2StatusId => "Same Wound",
                 _ => "--",
             };
         }

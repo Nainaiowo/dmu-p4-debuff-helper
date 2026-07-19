@@ -50,6 +50,14 @@ public enum FloodSide
 
 internal static class P4Flood
 {
+    public const uint AllaganFieldStatusId = 454;
+    public const uint WhiteWound1StatusId = 4887;
+    public const uint BlackWound1StatusId = 4888;
+    public const uint WhiteWound2StatusId = 5541;
+    public const uint BlackWound2StatusId = 5542;
+    public const uint BeyondDeath1StatusId = 5464;
+    public const uint BeyondDeath2StatusId = 1382;
+
     public static FloodSide GetWoundSide(WoundColor woundColor)
     {
         return woundColor switch
@@ -94,44 +102,66 @@ internal static class P4Flood
     {
         return statusId switch
         {
-            4888 => WoundColor.Black,
-            4887 => WoundColor.White,
+            WhiteWound1StatusId or WhiteWound2StatusId => WoundColor.White,
+            BlackWound1StatusId or BlackWound2StatusId => WoundColor.Black,
             _ => WoundColor.None,
         };
     }
 
-    public static FloodSide ResolveSide(uint statusId, WoundColor woundColor)
+    public static WoundColor GetEffectiveWoundColor(uint statusId)
     {
-        var woundSide = GetWoundSide(woundColor);
-        if (woundSide == FloodSide.None)
+        return statusId switch
+        {
+            WhiteWound1StatusId or BlackWound2StatusId => WoundColor.Black,
+            WhiteWound2StatusId or BlackWound1StatusId => WoundColor.White,
+            _ => WoundColor.None,
+        };
+    }
+
+    public static bool IsWoundStatus(uint statusId)
+    {
+        return GetEffectiveWoundColor(statusId) != WoundColor.None;
+    }
+
+    public static bool UsesTruthLieTell(uint statusId)
+    {
+        return statusId == AllaganFieldStatusId;
+    }
+
+    public static FloodSide ResolveSide(uint statusId, WoundColor woundColor, RealityState reality = RealityState.Unknown)
+    {
+        var destinationWound = ResolveDestinationWound(statusId, woundColor, reality);
+        if (destinationWound == WoundColor.None)
         {
             return FloodSide.None;
         }
 
-        return statusId switch
-        {
-            454 => GetOppositeSide(woundSide),
-            5464 => woundSide,
-            _ => FloodSide.None,
-        };
+        return GetWoundSide(destinationWound);
     }
 
-    public static bool? UsesSameWound(uint statusId)
+    public static bool? MustDieToResolve(uint statusId, RealityState reality = RealityState.Unknown)
     {
         return statusId switch
         {
-            454 => false,
-            5464 => true,
+            AllaganFieldStatusId when reality == RealityState.Real => false,
+            AllaganFieldStatusId when reality == RealityState.Fake => true,
+            BeyondDeath1StatusId => false,
+            BeyondDeath2StatusId => true,
             _ => null,
         };
     }
 
-    public static WoundColor ResolveDestinationWound(uint statusId, WoundColor woundColor)
+    public static WoundColor ResolveDestinationWound(uint statusId, WoundColor woundColor, RealityState reality = RealityState.Unknown)
     {
-        return statusId switch
+        if (woundColor == WoundColor.None)
         {
-            454 => GetOppositeWound(woundColor),
-            5464 => woundColor,
+            return WoundColor.None;
+        }
+
+        return MustDieToResolve(statusId, reality) switch
+        {
+            true => woundColor,
+            false => GetOppositeWound(woundColor),
             _ => WoundColor.None,
         };
     }
@@ -165,16 +195,12 @@ internal static class P4Flood
 
     public static string FormatInstruction(uint statusId, WoundColor woundColor, FloodSide floodSide)
     {
-        var woundText = woundColor == WoundColor.None
-            ? "your Wound"
-            : FormatWoundDebuff(woundColor);
-        var relation = UsesSameWound(statusId) switch
-        {
-            true => "same as",
-            false => "opposite",
-            _ => null,
-        };
-        var destinationWound = ResolveDestinationWound(statusId, woundColor);
+        return FormatInstruction(statusId, woundColor, floodSide, RealityState.Unknown);
+    }
+
+    public static string FormatInstruction(uint statusId, WoundColor woundColor, FloodSide floodSide, RealityState reality)
+    {
+        var destinationWound = ResolveDestinationWound(statusId, woundColor, reality);
         if (destinationWound == WoundColor.None)
         {
             destinationWound = GetWoundColorForSide(floodSide);
@@ -186,12 +212,12 @@ internal static class P4Flood
 
         return statusId switch
         {
-            454 when destinationText is not null && relation is not null => $"Allagan Field: go {destinationText} ({relation} {woundText}).",
-            454 => "Allagan Field: go opposite your Wound.",
-            5464 when destinationText is not null && relation is not null => $"Beyond Death: go {destinationText} ({relation} {woundText}).",
-            5464 => "Beyond Death: go same as your Wound.",
-            4888 => "Black Wound.",
-            4887 => "White Wound.",
+            AllaganFieldStatusId when destinationText is not null => $"Allagan Field: go {destinationText}.",
+            AllaganFieldStatusId => "Allagan Field: waiting for the truth/lie tell.",
+            BeyondDeath1StatusId or BeyondDeath2StatusId when destinationText is not null => $"Beyond Death: go {destinationText}.",
+            BeyondDeath1StatusId or BeyondDeath2StatusId => "Beyond Death: waiting for Wound.",
+            WhiteWound1StatusId or WhiteWound2StatusId => "White Wound.",
+            BlackWound1StatusId or BlackWound2StatusId => "Black Wound.",
             _ => "Tracked Flood debuff.",
         };
     }
@@ -244,6 +270,10 @@ public sealed record P4DebuffAssignment(
 public sealed record CapturedDebuffState(
     RealityState Reality,
     ushort? TellParam,
+    DateTime CapturedAtUtc);
+
+public sealed record CapturedFloodWoundState(
+    WoundColor EffectiveWoundColor,
     DateTime CapturedAtUtc);
 
 public sealed record P4DebuffRecord(

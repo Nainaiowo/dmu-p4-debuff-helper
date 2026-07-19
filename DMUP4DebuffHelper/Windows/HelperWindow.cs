@@ -661,8 +661,8 @@ public sealed class HelperWindow : Window, IDisposable
     {
         var previews = new (uint StatusId, RealityState Reality, ushort TellParam, float Time, string MemberName, int PartyIndex, WoundColor WoundColor)[]
         {
-            (4887, RealityState.Unknown, 0, 6.8f, "Preview Player", 0, WoundColor.White),
-            (454, RealityState.Unknown, 0, 7.4f, "Preview Player", 0, WoundColor.White),
+            (P4Flood.WhiteWound2StatusId, RealityState.Unknown, 0, 6.8f, "Preview Player", 0, WoundColor.White),
+            (P4Flood.AllaganFieldStatusId, RealityState.Real, 1122, 7.4f, "Preview Player", 0, WoundColor.White),
             (5545, RealityState.Real, 1120, 10.4f, "Preview Player", 0, WoundColor.None),
             (5544, RealityState.Fake, 1119, 12.0f, "Preview Player", 0, WoundColor.None),
             (5548, RealityState.Real, 1122, 18.0f, "Preview Player", 0, WoundColor.None),
@@ -711,14 +711,14 @@ public sealed class HelperWindow : Window, IDisposable
                 rule.SortOrder,
                 DateTime.UtcNow);
 
-            var floodSide = P4Flood.ResolveSide(rule.Id, preview.WoundColor);
+            var floodSide = P4Flood.ResolveSide(rule.Id, preview.WoundColor, preview.Reality);
             assignments.Add(new P4DebuffAssignment(
                 entry,
                 rule,
                 preview.Reality,
                 preview.TellParam == 0 ? null : preview.TellParam,
                 rule.Group == P4MechanicGroup.Flood
-                    ? P4Flood.FormatInstruction(rule.Id, preview.WoundColor, floodSide)
+                    ? P4Flood.FormatInstruction(rule.Id, preview.WoundColor, floodSide, preview.Reality)
                     : "Preview only.",
                 preview.WoundColor,
                 floodSide));
@@ -1158,7 +1158,7 @@ public sealed class HelperWindow : Window, IDisposable
 
     private static string GetRealityLine(P4DebuffAssignment assignment)
     {
-        var destinationWound = P4Flood.ResolveDestinationWound(assignment.Rule.Id, assignment.WoundColor);
+        var destinationWound = P4Flood.ResolveDestinationWound(assignment.Rule.Id, assignment.WoundColor, assignment.Reality);
         if (destinationWound == WoundColor.None)
         {
             destinationWound = P4Flood.GetWoundColorForSide(assignment.FloodSide);
@@ -1179,10 +1179,11 @@ public sealed class HelperWindow : Window, IDisposable
         {
             return assignment.Rule.Id switch
             {
-                454 => "Opposite Wound",
-                5464 => "Same Wound",
-                4888 => "Black Wound",
-                4887 => "White Wound",
+                P4Flood.AllaganFieldStatusId => "Allagan Field",
+                P4Flood.BeyondDeath1StatusId => "Opposite Wound",
+                P4Flood.BeyondDeath2StatusId => "Same Wound",
+                P4Flood.BlackWound1StatusId or P4Flood.BlackWound2StatusId => "Black Wound",
+                P4Flood.WhiteWound1StatusId or P4Flood.WhiteWound2StatusId => "White Wound",
                 _ => "Flood",
             };
         }
@@ -1262,6 +1263,12 @@ public sealed class HelperWindow : Window, IDisposable
         if (assignment.FloodSide != FloodSide.None)
         {
             return GetFloodSideColor(assignment.FloodSide);
+        }
+
+        var displayedWoundSide = P4Flood.GetWoundSide(P4Flood.GetStatusWoundColor(assignment.Rule.Id));
+        if (displayedWoundSide != FloodSide.None)
+        {
+            return GetFloodSideColor(displayedWoundSide);
         }
 
         var woundSide = P4Flood.GetWoundSide(assignment.WoundColor);

@@ -36,6 +36,7 @@ public sealed class Plugin : IDalamudPlugin
     private const int QueuedChatDelayMs = 200;
     private const float StatusTimerAnchorRefreshThreshold = 0.05f;
     private static readonly TimeSpan BossTellFreshness = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan FloodWoundMemory = TimeSpan.FromSeconds(90);
 
     internal static readonly IReadOnlyDictionary<uint, WatchedStatus> WatchedStatuses =
         new Dictionary<uint, WatchedStatus>
@@ -46,10 +47,13 @@ public sealed class Plugin : IDalamudPlugin
             [5546] = new(5546, "Acceleration Bomb", P4Boss.NeoExdeath, P4MechanicGroup.GrandCross, 40),
             [5548] = new(5548, "Dynamic Fluid", P4Boss.Chaos, P4MechanicGroup.Chaos, 50),
             [5547] = new(5547, "Entropy", P4Boss.Chaos, P4MechanicGroup.Chaos, 60),
-            [4888] = new(4888, "Black Wound", P4Boss.NeoExdeath, P4MechanicGroup.Flood, 70),
-            [4887] = new(4887, "White Wound", P4Boss.NeoExdeath, P4MechanicGroup.Flood, 80),
-            [454] = new(454, "Allagan Field", P4Boss.NeoExdeath, P4MechanicGroup.Flood, 90),
-            [5464] = new(5464, "Beyond Death", P4Boss.NeoExdeath, P4MechanicGroup.Flood, 100),
+            [P4Flood.WhiteWound1StatusId] = new(P4Flood.WhiteWound1StatusId, "White Wound", P4Boss.NeoExdeath, P4MechanicGroup.Flood, 70),
+            [P4Flood.WhiteWound2StatusId] = new(P4Flood.WhiteWound2StatusId, "White Wound", P4Boss.NeoExdeath, P4MechanicGroup.Flood, 71),
+            [P4Flood.BlackWound1StatusId] = new(P4Flood.BlackWound1StatusId, "Black Wound", P4Boss.NeoExdeath, P4MechanicGroup.Flood, 80),
+            [P4Flood.BlackWound2StatusId] = new(P4Flood.BlackWound2StatusId, "Black Wound", P4Boss.NeoExdeath, P4MechanicGroup.Flood, 81),
+            [P4Flood.AllaganFieldStatusId] = new(P4Flood.AllaganFieldStatusId, "Allagan Field", P4Boss.NeoExdeath, P4MechanicGroup.Flood, 90),
+            [P4Flood.BeyondDeath1StatusId] = new(P4Flood.BeyondDeath1StatusId, "Beyond Death", P4Boss.NeoExdeath, P4MechanicGroup.Flood, 100),
+            [P4Flood.BeyondDeath2StatusId] = new(P4Flood.BeyondDeath2StatusId, "Beyond Death", P4Boss.NeoExdeath, P4MechanicGroup.Flood, 101),
         };
 
     private static readonly IReadOnlyDictionary<ushort, RealityState> BossTellRealities =
@@ -92,6 +96,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Dictionary<uint, uint> statusIconCache = new();
     private readonly Dictionary<string, BossTellSnapshot> latestBossTells = new(StringComparer.Ordinal);
     private readonly Dictionary<string, CapturedDebuffState> capturedDebuffStates = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, CapturedFloodWoundState> capturedFloodWounds = new(StringComparer.Ordinal);
     private readonly Dictionary<string, StatusTimerAnchor> statusTimerAnchors = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> activeDebuffRecordIndexes = new(StringComparer.Ordinal);
     private readonly HashSet<string> activeDebuffKeysLastFrame = new(StringComparer.Ordinal);
@@ -387,6 +392,7 @@ public sealed class Plugin : IDalamudPlugin
             currentBossTells.Clear();
             latestBossTells.Clear();
             capturedDebuffStates.Clear();
+            capturedFloodWounds.Clear();
             statusTimerAnchors.Clear();
             activeBossTellKeysLastFrame.Clear();
             ResetPullState();
@@ -464,6 +470,8 @@ public sealed class Plugin : IDalamudPlugin
             .ThenBy(entry => entry.MemberName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(entry => entry.StatusId));
         PruneStatusTimerAnchors(currentEntries);
+        CaptureActiveFloodWounds(currentEntries, now);
+        PruneCapturedFloodWounds(now);
 
         RefreshBossTellSnapshots();
         RefreshAssignments();
@@ -581,25 +589,28 @@ public sealed class Plugin : IDalamudPlugin
                 continue;
             }
 
+            var capturedState = rule.Group == P4MechanicGroup.Flood && P4Flood.UsesTruthLieTell(rule.Id)
+                ? GetOrUpdateCapturedDebuffState(entry, rule)
+                : new CapturedDebuffState(RealityState.Unknown, null, DateTime.UtcNow);
             var woundColor = rule.Group == P4MechanicGroup.Flood
                 ? GetWoundColor(entry.MemberKey)
                 : WoundColor.None;
-            var floodSide = P4Flood.ResolveSide(rule.Id, woundColor);
+            var floodSide = P4Flood.ResolveSide(rule.Id, woundColor, capturedState.Reality);
 
             if (rule.Group == P4MechanicGroup.Flood)
             {
                 currentAssignments.Add(new P4DebuffAssignment(
                     entry,
                     rule,
-                    RealityState.Unknown,
-                    null,
-                    GetInstruction(rule, RealityState.Unknown, woundColor, floodSide),
+                    capturedState.Reality,
+                    capturedState.TellParam,
+                    GetInstruction(rule, capturedState.Reality, woundColor, floodSide),
                     woundColor,
                     floodSide));
                 continue;
             }
 
-            var capturedState = GetOrUpdateCapturedDebuffState(entry, rule);
+            capturedState = GetOrUpdateCapturedDebuffState(entry, rule);
 
             currentAssignments.Add(new P4DebuffAssignment(
                 entry,
@@ -683,7 +694,9 @@ public sealed class Plugin : IDalamudPlugin
             }
 
             var existingRecord = currentPullDebuffRecords[recordIndex];
-            if (existingRecord.Reality == RealityState.Unknown && assignment.Reality != RealityState.Unknown)
+            if ((existingRecord.Reality == RealityState.Unknown && assignment.Reality != RealityState.Unknown) ||
+                (existingRecord.WoundColor == WoundColor.None && assignment.WoundColor != WoundColor.None) ||
+                (existingRecord.FloodSide == FloodSide.None && assignment.FloodSide != FloodSide.None))
             {
                 currentPullDebuffRecords[recordIndex] = CreateDebuffRecord(assignment) with
                 {
@@ -766,6 +779,39 @@ public sealed class Plugin : IDalamudPlugin
             : new CapturedDebuffState(RealityState.Unknown, null, DateTime.UtcNow);
     }
 
+    private void CaptureActiveFloodWounds(IReadOnlyList<PartyStatusEntry> activeEntries, DateTime now)
+    {
+        foreach (var entry in activeEntries.Where(entry => P4Flood.IsWoundStatus(entry.StatusId)))
+        {
+            var effectiveWound = P4Flood.GetEffectiveWoundColor(entry.StatusId);
+            if (effectiveWound == WoundColor.None)
+            {
+                continue;
+            }
+
+            capturedFloodWounds[entry.MemberKey] = new CapturedFloodWoundState(effectiveWound, now);
+        }
+    }
+
+    private void PruneCapturedFloodWounds(DateTime now)
+    {
+        if (capturedFloodWounds.Count == 0)
+        {
+            return;
+        }
+
+        var activeMemberKeys = currentMembers
+            .Select(member => member.MemberKey)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var (memberKey, woundState) in capturedFloodWounds.ToArray())
+        {
+            if (!activeMemberKeys.Contains(memberKey) || now - woundState.CapturedAtUtc > FloodWoundMemory)
+            {
+                capturedFloodWounds.Remove(memberKey);
+            }
+        }
+    }
+
     private static P4Boss ResolveBoss(ICharacter character)
     {
         var name = character.Name.TextValue;
@@ -800,7 +846,9 @@ public sealed class Plugin : IDalamudPlugin
     private bool TryGetRelevantTell(WatchedStatus rule, out BossTellSnapshot? tell)
     {
         tell = null;
-        var key = GetTellKey(rule.SourceBoss, rule.Group);
+        var key = rule.Group == P4MechanicGroup.Flood
+            ? GetTellKey(P4Boss.NeoExdeath, P4MechanicGroup.GrandCross)
+            : GetTellKey(rule.SourceBoss, rule.Group);
         if (!latestBossTells.TryGetValue(key, out var candidate))
         {
             return false;
@@ -826,7 +874,7 @@ public sealed class Plugin : IDalamudPlugin
         {
             P4MechanicGroup.GrandCross => GetGrandCrossInstruction(rule.Id, reality),
             P4MechanicGroup.Chaos => GetChaosInstruction(rule.Id, reality),
-            P4MechanicGroup.Flood => P4Flood.FormatInstruction(rule.Id, woundColor, floodSide),
+            P4MechanicGroup.Flood => P4Flood.FormatInstruction(rule.Id, woundColor, floodSide, reality),
             _ => "Tracked status.",
         };
     }
@@ -892,15 +940,16 @@ public sealed class Plugin : IDalamudPlugin
                 continue;
             }
 
-            if (entry.StatusId == 4888)
+            var effectiveWound = P4Flood.GetEffectiveWoundColor(entry.StatusId);
+            if (effectiveWound != WoundColor.None)
             {
-                return WoundColor.Black;
+                return effectiveWound;
             }
+        }
 
-            if (entry.StatusId == 4887)
-            {
-                return WoundColor.White;
-            }
+        if (capturedFloodWounds.TryGetValue(memberKey, out var capturedWound))
+        {
+            return capturedWound.EffectiveWoundColor;
         }
 
         return WoundColor.None;
@@ -972,6 +1021,7 @@ public sealed class Plugin : IDalamudPlugin
         currentBossTells.Clear();
         latestBossTells.Clear();
         capturedDebuffStates.Clear();
+        capturedFloodWounds.Clear();
         statusTimerAnchors.Clear();
         activeBossTellKeysLastFrame.Clear();
         ResetPullState();
@@ -1054,6 +1104,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         currentPullDebuffRecords.Clear();
         currentPullBossTells.Clear();
+        capturedFloodWounds.Clear();
         activeDebuffRecordIndexes.Clear();
         activeDebuffKeysLastFrame.Clear();
         activeBossTellKeysLastFrame.Clear();
