@@ -281,7 +281,7 @@ public sealed class HelperWindow : Window, IDisposable
         ImGui.SameLine();
         ImGui.TextColored(GoldColor, FormatLimitCutNorth(state));
 
-        ImGui.TextDisabled("Rotation");
+        ImGui.TextDisabled("Player rotation");
         ImGui.SameLine();
         ImGui.TextColored(GetLimitCutRotationColor(state.Rotation), FormatLimitCutRotation(state.Rotation));
 

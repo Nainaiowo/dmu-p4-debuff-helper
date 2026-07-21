@@ -94,7 +94,7 @@ public sealed class P3LimitCutTracker
         }
 
         secondClonePosition = position;
-        rotation = ResolveRotation(firstClonePosition.Value, position);
+        rotation = ResolvePlayerRotation(firstClonePosition.Value, position);
     }
 
     public void Reset()
@@ -149,7 +149,7 @@ public sealed class P3LimitCutTracker
         return distance is >= MinimumCloneDistanceFromCenter and <= MaximumCloneDistanceFromCenter;
     }
 
-    private static P3LimitCutRotation ResolveRotation(Vector3 first, Vector3 second)
+    private static P3LimitCutRotation ResolvePlayerRotation(Vector3 first, Vector3 second)
     {
         var firstAngle = GetClockwiseAngleFromNorth(first);
         var secondAngle = GetClockwiseAngleFromNorth(second);
@@ -159,9 +159,10 @@ public sealed class P3LimitCutTracker
             return P3LimitCutRotation.Unknown;
         }
 
+        // Players rotate opposite the Kefka clone sequence after orienting to new north.
         return delta > 0.0f
-            ? P3LimitCutRotation.Clockwise
-            : P3LimitCutRotation.CounterClockwise;
+            ? P3LimitCutRotation.CounterClockwise
+            : P3LimitCutRotation.Clockwise;
     }
 
     private static string FormatDirection(Vector3 position)
