@@ -60,14 +60,16 @@ public sealed class ConfigWindow : Window, IDisposable
             plugin.OpenHelperUi();
         }
 
-        var showHelper = configuration.ShowHelper;
-        if (ImGui.Checkbox("Show helper window", ref showHelper))
+        var onlyShowInInstance = configuration.OnlyShowInInstance;
+        if (ImGui.Checkbox("Only show in instance", ref onlyShowInInstance))
         {
-            plugin.SetShowHelper(showHelper);
+            plugin.SetOnlyShowInInstance(onlyShowInInstance);
         }
 
+        ImGui.TextDisabled("Hides the helper outside Dancing Mad (Ultimate) unless preview is enabled.");
+
         var showPreview = configuration.PreviewWhenInactive;
-        if (ImGui.Checkbox("Preview when inactive", ref showPreview))
+        if (ImGui.Checkbox("Preview helper", ref showPreview))
         {
             plugin.SetPreviewWhenInactive(showPreview);
         }

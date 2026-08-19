@@ -7,9 +7,12 @@ namespace DMUP4DebuffHelper;
 [Serializable]
 public sealed class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 3;
+    public int Version { get; set; } = 4;
 
+    // Retained for migrating configurations saved before the instance-only option.
     public bool ShowHelper { get; set; } = true;
+
+    public bool OnlyShowInInstance { get; set; }
 
     public bool PreviewWhenInactive { get; set; }
 

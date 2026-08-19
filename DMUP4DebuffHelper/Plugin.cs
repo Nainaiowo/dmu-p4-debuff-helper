@@ -139,17 +139,21 @@ public sealed class Plugin : IDalamudPlugin
 
     public bool IsInDmu { get; private set; }
 
+    private bool ShouldShowHelperWindow => ShouldShowHelperWindowInTerritory(ClientState.TerritoryType);
+
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        MigrateConfiguration();
         Configuration.SelectedBlackHoleStrategy = DMUP3BlackholeHelper.BlackHoleStrategy.Normalize(Configuration.SelectedBlackHoleStrategy);
+        IsInDmu = ClientState.IsLoggedIn && ClientState.TerritoryType == DmuTerritoryId;
 
         p3BlackHoleTracker = new P3BlackHoleTracker(this);
         p3LimitCutTracker = new P3LimitCutTracker();
         configWindow = new ConfigWindow(this);
         helperWindow = new HelperWindow(this)
         {
-            IsOpen = Configuration.ShowHelper,
+            IsOpen = ShouldShowHelperWindow,
         };
 
         windowSystem.AddWindow(configWindow);
@@ -171,6 +175,9 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         Framework.Update += OnFrameworkUpdate;
+        ClientState.Login += OnClientLogin;
+        ClientState.Logout += OnClientLogout;
+        ClientState.TerritoryChanged += OnTerritoryChanged;
         PluginInterface.UiBuilder.Draw += windowSystem.Draw;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
         PluginInterface.UiBuilder.OpenMainUi += ToggleHelperUi;
@@ -187,6 +194,9 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenMainUi -= ToggleHelperUi;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;
         PluginInterface.UiBuilder.Draw -= windowSystem.Draw;
+        ClientState.TerritoryChanged -= OnTerritoryChanged;
+        ClientState.Logout -= OnClientLogout;
+        ClientState.Login -= OnClientLogin;
         Framework.Update -= OnFrameworkUpdate;
         RemoveCommands();
         actionEffectHook?.Dispose();
@@ -259,28 +269,32 @@ public sealed class Plugin : IDalamudPlugin
 
     public void ToggleHelperUi()
     {
-        helperWindow.Toggle();
-        Configuration.ShowHelper = helperWindow.IsOpen;
-        SaveConfiguration();
+        if (helperWindow.IsOpen)
+        {
+            helperWindow.IsOpen = false;
+            return;
+        }
+
+        RefreshHelperWindowVisibility();
     }
 
     public void OpenHelperUi()
     {
-        Configuration.ShowHelper = true;
-        helperWindow.IsOpen = true;
-        SaveConfiguration();
+        RefreshHelperWindowVisibility();
     }
 
-    public void SetShowHelper(bool enabled)
+    public void SetOnlyShowInInstance(bool enabled)
     {
-        Configuration.ShowHelper = enabled;
-        helperWindow.IsOpen = enabled;
+        Configuration.OnlyShowInInstance = enabled;
+        RefreshHelperWindowVisibility();
         SaveConfiguration();
     }
 
     public void SetPreviewWhenInactive(bool enabled)
     {
         Configuration.PreviewWhenInactive = enabled;
+        UpdateDisplayMode();
+        RefreshHelperWindowVisibility();
         SaveConfiguration();
     }
 
@@ -327,6 +341,23 @@ public sealed class Plugin : IDalamudPlugin
         Configuration.Save();
     }
 
+    private void MigrateConfiguration()
+    {
+        if (Configuration.Version >= 4)
+        {
+            return;
+        }
+
+        if (!Configuration.ShowHelper)
+        {
+            Configuration.OnlyShowInInstance = true;
+            Configuration.PreviewWhenInactive = false;
+        }
+
+        Configuration.Version = 4;
+        SaveConfiguration();
+    }
+
     private void OnConfigCommand(string command, string args)
     {
         ToggleConfigUi();
@@ -341,6 +372,43 @@ public sealed class Plugin : IDalamudPlugin
     {
         FlushQueuedPartyChatMessages(DateTime.UtcNow);
         RefreshStatusSnapshot();
+    }
+
+    private void OnClientLogin()
+    {
+        IsInDmu = ClientState.TerritoryType == DmuTerritoryId;
+        RefreshHelperWindowVisibility();
+    }
+
+    private void OnClientLogout(int type, int code)
+    {
+        helperWindow.IsOpen = false;
+        IsInDmu = false;
+        ResetHelperState("Logged out");
+    }
+
+    private void OnTerritoryChanged(uint territory)
+    {
+        IsInDmu = ClientState.IsLoggedIn && territory == DmuTerritoryId;
+        if (!IsInDmu)
+        {
+            ResetHelperState("Left DMU");
+        }
+
+        helperWindow.IsOpen = ShouldShowHelperWindowInTerritory(territory);
+    }
+
+    private void RefreshHelperWindowVisibility()
+    {
+        helperWindow.IsOpen = ShouldShowHelperWindow;
+    }
+
+    private bool ShouldShowHelperWindowInTerritory(uint territory)
+    {
+        return ClientState.IsLoggedIn &&
+            (Configuration.PreviewWhenInactive ||
+                !Configuration.OnlyShowInInstance ||
+                territory == DmuTerritoryId);
     }
 
     private void FlushQueuedPartyChatMessages(DateTime now)
@@ -378,26 +446,10 @@ public sealed class Plugin : IDalamudPlugin
 
     private void RefreshStatusSnapshot()
     {
-        IsInDmu = ClientState.TerritoryType == DmuTerritoryId;
+        IsInDmu = ClientState.IsLoggedIn && ClientState.TerritoryType == DmuTerritoryId;
         if (!IsInDmu)
         {
-            p3BlackHoleTracker.Refresh(isInDmu: false, suppressLiveForP4: false);
-            p3LimitCutTracker.Reset();
-            CaptureCurrentPullSnapshot("Left DMU");
-            currentEntries.Clear();
-            currentMembers.Clear();
-            currentAssignments.Clear();
-            localAssignments.Clear();
-            currentGazeAssignments.Clear();
-            currentBossTells.Clear();
-            latestBossTells.Clear();
-            capturedDebuffStates.Clear();
-            capturedFloodWounds.Clear();
-            statusTimerAnchors.Clear();
-            activeBossTellKeysLastFrame.Clear();
-            ResetPullState();
-            p4SeenThisPull = false;
-            UpdateDisplayMode();
+            ResetHelperState("Left DMU");
             return;
         }
 
@@ -495,6 +547,27 @@ public sealed class Plugin : IDalamudPlugin
             }
         }
 
+        UpdateDisplayMode();
+    }
+
+    private void ResetHelperState(string snapshotReason)
+    {
+        p3BlackHoleTracker.Refresh(isInDmu: false, suppressLiveForP4: false);
+        p3LimitCutTracker.Reset();
+        CaptureCurrentPullSnapshot(snapshotReason);
+        currentEntries.Clear();
+        currentMembers.Clear();
+        currentAssignments.Clear();
+        localAssignments.Clear();
+        currentGazeAssignments.Clear();
+        currentBossTells.Clear();
+        latestBossTells.Clear();
+        capturedDebuffStates.Clear();
+        capturedFloodWounds.Clear();
+        statusTimerAnchors.Clear();
+        activeBossTellKeysLastFrame.Clear();
+        ResetPullState();
+        p4SeenThisPull = false;
         UpdateDisplayMode();
     }
 
