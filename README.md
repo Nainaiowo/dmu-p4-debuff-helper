@@ -17,16 +17,8 @@ Open settings:
 
 ```text
 /dmu
-/dmup3
-```
-
-Open the helper window:
-
-```text
 /dmuh
 /dmuhelper
-/dmup3h
-/dmup3helper
 ```
 
 ## Dalamud Repository

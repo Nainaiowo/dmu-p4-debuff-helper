@@ -7,8 +7,7 @@
 - Repo: `Nainaiowo/dmu-p4-debuff-helper`
 - Puni plugin ID: `162`
 - Dalamud feed URL: `https://puni.sh/api/repository/nainai`
-- Settings commands: `/dmu`, `/dmup3`
-- Helper commands: `/dmuh`, `/dmuhelper`, `/dmup3h`, `/dmup3helper`
+- Settings commands: `/dmu`, `/dmuh`, `/dmuhelper`
 - DMU territory ID: `1363`
 
 ## Implemented

@@ -25,11 +25,8 @@ namespace DMUP4DebuffHelper;
 public sealed class Plugin : IDalamudPlugin
 {
     private const string ConfigCommandName = "/dmu";
-    private const string ShortHelperCommandName = "/dmuh";
-    private const string HelperCommandName = "/dmuhelper";
-    private const string LegacyP3ConfigCommandName = "/dmup3";
-    private const string LegacyP3ShortHelperCommandName = "/dmup3h";
-    private const string LegacyP3HelperCommandName = "/dmup3helper";
+    private const string ShortConfigCommandName = "/dmuh";
+    private const string ConfigCommandAliasName = "/dmuhelper";
     private const uint DmuTerritoryId = 1363;
     private const uint BossTellStatusId = 2056;
     private const uint CursedShriekStatusId = 5543;
@@ -160,11 +157,8 @@ public sealed class Plugin : IDalamudPlugin
         windowSystem.AddWindow(helperWindow);
 
         AddConfigCommand(ConfigCommandName);
-        AddConfigCommand(LegacyP3ConfigCommandName);
-        AddHelperCommand(ShortHelperCommandName);
-        AddHelperCommand(HelperCommandName);
-        AddHelperCommand(LegacyP3ShortHelperCommandName);
-        AddHelperCommand(LegacyP3HelperCommandName);
+        AddConfigCommand(ShortConfigCommandName);
+        AddConfigCommand(ConfigCommandAliasName);
 
         unsafe
         {
@@ -213,22 +207,6 @@ public sealed class Plugin : IDalamudPlugin
             CommandManager.AddHandler(command, new CommandInfo(OnConfigCommand)
             {
                 HelpMessage = "Open the DMU Helper settings window.",
-            });
-            registeredCommands.Add(command);
-        }
-        catch (Exception ex)
-        {
-            Log.Debug(ex, "Could not register DMU Helper command {Command}.", command);
-        }
-    }
-
-    private void AddHelperCommand(string command)
-    {
-        try
-        {
-            CommandManager.AddHandler(command, new CommandInfo(OnHelperCommand)
-            {
-                HelpMessage = "Open the DMU Helper window.",
             });
             registeredCommands.Add(command);
         }
@@ -360,12 +338,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnConfigCommand(string command, string args)
     {
-        ToggleConfigUi();
-    }
-
-    private void OnHelperCommand(string command, string args)
-    {
-        ToggleHelperUi();
+        OpenConfigUi();
     }
 
     private void OnFrameworkUpdate(IFramework framework)
