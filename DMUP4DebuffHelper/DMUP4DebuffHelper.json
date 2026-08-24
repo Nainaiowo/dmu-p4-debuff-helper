@@ -5,7 +5,7 @@
   "DownloadCount": 513,
   "Punchline": "Track DMU P3 Black Hole and P4 debuffs.",
   "Description": "Shows a compact DMU helper window for P3 Black Hole assignments and P4 debuff guidance.",
-  "Changelog": "Added controls to only show the helper in DMU and preview it outside the instance.",
+  "Changelog": "Updated /dmu, /dmuh, and /dmuhelper to open settings and removed the legacy P3 commands.",
   "RepoUrl": "https://github.com/Nainaiowo/dmu-p4-debuff-helper",
   "IconUrl": "https://raw.githubusercontent.com/Nainaiowo/dmu-p4-debuff-helper/main/assets/icon.png",
   "ApplicableVersion": "any",
